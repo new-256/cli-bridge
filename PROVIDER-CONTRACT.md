@@ -48,6 +48,7 @@ export default function defineProvider(deps = {}) { return descriptor }
 | ★ `buildResult(parsed, outcome, mode, stderrText, stdoutText, backend)` | fn | 统一结果对象 `{ok,status,response,sessionId,mode,backend,totalTokens,durationSeconds,numTurns,exitCode,stderr,...}` |
 | `foldStreamEvent(ev, project, summarizeArgs, maxArgLen, maxTrail)` | fn | 实时步骤折叠（写 project.current/trail）；无 stream-json 的 provider 省略 |
 | `isTransientCliError(res)` | fn→bool | 瞬时错误自动重试一次的判定 |
+| `isLimited(res)` | fn→bool | 可选：覆盖 kit 的限流/网络判定（默认 kit `isLimited`）；runner 用 provider 版决定是否弹回退三选一 |
 | `failureHint(res)` | fn→string | 按失败类型给可行动指引（空串=用通用） |
 | `preflight({args,exec,backend,cwd,engine,ctx,o})` | fn | 返回 `{ abort: <结果对象> }` 或 undefined |
 | `execute({args,exec,backend,cwd,built,engine,ctx,o,runSync})` | async fn | **非 spawn 主路径**（mimo 桌面 HTTP 等）给了它则 runner 完全委托 |
