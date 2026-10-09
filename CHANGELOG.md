@@ -50,10 +50,12 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
   legacy `agent.cordis.yml` + `preset.yml` 与运行时声明；`dynamic/<id>.host.js` 由
   模板（双占位符 KIT+PROVIDER）内联生成（`stripModuleSyntax`，遇到不支持的模块形态
   大声失败）；`--check` 漂移即 CI 红；`--only=<id>` 支持并行开发。
-- **发布红线闸门 `scripts/verify.mjs`**（prepack + CI）：client 注册 id ≡ 包名
+- **发布红线闸门 `scripts/verify.mjs`**（prepack + CI，9 项）：client 注册 id ≡ 包名
   （历史事故 agy 1.6.1 / codebuddy 1.1.8：不一致 = 客户端组合加载失败 = 启动致命屏）、
-  bundle 行名、exports 目标存在性、描述符完整度、禁止 `@deepseek-ai/dsh*` peer 依赖、
-  `dsh.client.platform=web`。
+  bundle 行名、exports 目标存在性、preset 桥接说明符、描述符完整度、
+  `dsh.client.platform=web`、plugin-list 单源存在性、版本双锁
+  （`package.json` ≡ MCP `SERVER_VERSION` ≡ CHANGELOG 顶部条目）、
+  凭据泄漏扫描（fixtures 文件名形态 + 源码内 ≥24 位随机凭据字面量，`fake-*` 白名单）。
 - **CI（`.github/workflows/ci.yml`）**：node 18/20/22 矩阵跑 build → verify → build
   --check → dynamic 宿主 `node --check` → `node --test` → 统一与分 provider MCP
   `--check`。
