@@ -7,7 +7,7 @@
 // ——队友交付描述符后这些用例自动变成硬闸门。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { settingsView, parseSettingsBody, writeSettingsFile, effectiveSettings } from '../../home-plugin/cli-bridge-indicator/lib/settings.mjs'
@@ -15,6 +15,7 @@ import { createProvider } from '../../providers/registry.mjs'
 
 function freshIo() {
   const dir = join(tmpdir(), 'clb-set-' + Date.now() + '-' + Math.floor(Math.random() * 1e6))
+  mkdirSync(dir, { recursive: true })
   return { dir, unified: join(dir, 'cli-bridge-settings.json'), io: { env: { DSH_HOME: dir }, path: join(dir, 'cli-bridge-settings.json') } }
 }
 
@@ -46,6 +47,7 @@ test('POST semantics: empty keeps, Clear erases, junk dropped', () => {
 
 test('legacy migration: codebuddy flat file feeds unset fields', { skip: cbKeys.includes('preferredBackend') ? false : 'provider stub has no keys' }, () => {
   const dir = join(tmpdir(), 'clb-legacy-' + Date.now())
+  mkdirSync(dir, { recursive: true })
   try {
     const legacy = join(dir, 'codebuddy-bridge-settings.json')
     writeFileSync(legacy, JSON.stringify({ preferredBackend: 'workbuddy', defaultModel: 'glm-5.3', codebuddyEnToken: 'tok-abc12345' }))
@@ -64,6 +66,7 @@ test('legacy migration: codebuddy flat file feeds unset fields', { skip: cbKeys.
 
 test('legacy migration: mimo backend/desktopModel key mapping', { skip: (() => { const m = createProvider('mimo', { env: {} }); return (m.settings && m.settings.keys || []).includes('preferredBackend') ? false : 'provider stub has no keys' })() }, () => {
   const dir = join(tmpdir(), 'clb-legacy-mimo-' + Date.now())
+  mkdirSync(dir, { recursive: true })
   try {
     const legacy = join(dir, 'mimo-settings.json')
     writeFileSync(legacy, JSON.stringify({ backend: 'mimo-desktop', desktopModel: 'mimo-auto' }))
