@@ -19,8 +19,9 @@
 #     包 0.1.7-alpha.1 才存在，旧 loader 对导入失败是致命的）。改由指示灯 host 半
 #     在 apply() 里 ctx.inject(['agentPresets']) 向注册表登记三个 preset
 #     （cordis-agy / codebuddy-first / cordis-mimo；旧 DSH 上注入器挂起零副作用）。
-#     定义文件：lib/preset-definitions/<id>.mjs（由 scripts/gen-preset-decl.mjs
-#     从 preset/<id>/agent.cordis.yml 生成，勿手改 plugins 块）。
+#     定义与 legacy YAML 同源：lib/preset-declarations.mjs 直接 import
+#     preset/<dir>/plugin-list.mjs（buildPlugins(meta) 一份源两用），
+#     {__jsExpr} 字面量原样透传给注册器 —— 不存在第二个生成器。
 #
 # 机器特定配置请写在用户层补丁
 #   Windows: %APPDATA%\DSH Desktop\dsh-home\cordis.patch.yml
