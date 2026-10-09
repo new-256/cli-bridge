@@ -528,7 +528,7 @@ export function createRunner(o) {
           if (!cliRetried) { cliRetried = true; attempt -= 1; continue }
           res.retried = true; break
         }
-        if (!isLimited(res)) break
+        if (!(provider.isLimited ? provider.isLimited(res) : isLimited(res))) break
         const decision = await askFallback(exec, res, attempt < 2)
         if (decision === 'fallback') { res = fallbackResult(res, built.mode, provider); break }
         if (decision === 'retry' && attempt < 2) continue

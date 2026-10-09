@@ -40,6 +40,57 @@ function descriptors(io) {
   return map
 }
 
+// ── 旧包独立设置文件的一次性迁移读（keystone 职责：文件兼容属于落盘层）──────────
+// codebuddy-first-bridge v1.3.x → {DSH_HOME}/codebuddy-bridge-settings.json（扁平同字段名；
+//   旧 env 覆盖 CODEBUDDY_SETTINGS_FILE）
+// mimo-first-bridge v1.x       → {APPDATA}/mimo-first-bridge/settings.json（键 backend/
+//   desktopModel；旧 env 覆盖 MIMO_BRIDGE_SETTINGS；非 Windows 为 HOME/.config）
+// 规则：统一文件缺失/无该分区值时回退读旧文件一次；统一文件一旦有值旧文件即失效；
+// 永不写旧文件（用户在新面板保存后自然完成迁移）。
+function envOf(io) {
+  const o = io || {}
+  if (o.env) return o.env
+  const proc = globalThis.process
+  return (proc && proc.env) || {}
+}
+
+function configBase(env) {
+  const nodePath = builtinModule('node:path')
+  if (process.platform === 'win32' && env.APPDATA) return nodePath ? nodePath.join(env.APPDATA, 'mimo-first-bridge', 'settings.json') : env.APPDATA + '/mimo-first-bridge/settings.json'
+  const base = env.HOME ? (nodePath ? nodePath.join(env.HOME, '.config') : env.HOME + '/.config') : null
+  return base ? (nodePath ? nodePath.join(base, 'mimo-first-bridge', 'settings.json') : base + '/mimo-first-bridge/settings.json') : null
+}
+
+const LEGACY_SOURCES = {
+  codebuddy: (env) => env.CODEBUDDY_SETTINGS_FILE || (() => {
+    const nodePath = builtinModule('node:path')
+    return env.DSH_HOME ? (nodePath ? nodePath.join(env.DSH_HOME, 'codebuddy-bridge-settings.json') : env.DSH_HOME + '/codebuddy-bridge-settings.json') : null
+  })(),
+  mimo: (env) => env.MIMO_BRIDGE_SETTINGS || configBase(env)
+}
+
+function legacyPartitionSlice(id, io) {
+  const o = io || {}
+  try {
+    const env = envOf(o)
+    const file = LEGACY_SOURCES[id] ? LEGACY_SOURCES[id](env) : null
+    if (!file) return null
+    const nodeFs = o.legacyFs || builtinModule('node:fs')
+    if (!nodeFs || !nodeFs.existsSync || !nodeFs.existsSync(file)) return null
+    const parsed = JSON.parse(nodeFs.readFileSync(file, 'utf8'))
+    if (!parsed || typeof parsed !== 'object') return null
+    let mapped = parsed
+    if (id === 'mimo') {
+      mapped = {}
+      if (parsed.backend) mapped.preferredBackend = parsed.backend
+      if (parsed.desktopModel) mapped.desktopModel = parsed.desktopModel
+    }
+    const out = {}
+    for (const k of Object.keys(mapped)) if (mapped[k] !== undefined && mapped[k] !== null && mapped[k] !== '') out[k] = mapped[k]
+    return Object.keys(out).length ? out : null
+  } catch (e) { return null }
+}
+
 export function defaultSettings(io) {
   const map = descriptors(io)
   const out = Object.create(null)
@@ -55,7 +106,15 @@ export function normalizeAll(raw, io) {
   const map = descriptors(io)
   const snap = Object.create(null)
   for (const id of PROVIDER_IDS) snap[id] = Object.assign({}, defaultSettings(io)[id])
-  if (!raw || typeof raw !== 'object') return snap
+  const touched = Object.create(null)
+  for (const id of PROVIDER_IDS) touched[id] = Object.create(null)
+  if (raw && typeof raw === 'object') {
+    for (const id of PROVIDER_IDS) {
+      const src = raw[id]
+      if (src && typeof src === 'object') for (const k of Object.keys(src)) touched[id][k] = true
+    }
+  }
+  if (!raw || typeof raw !== 'object') return applyLegacy(snap, map, io, touched)
   for (const id of PROVIDER_IDS) {
     const d = map[id]
     if (!d || !d.settings) continue
@@ -67,6 +126,30 @@ export function normalizeAll(raw, io) {
     } catch (e) { }
   }
   if (typeof raw.updatedAt === 'number' && raw.updatedAt > 0) snap.updatedAt = raw.updatedAt
+  return applyLegacy(snap, map, io, touched)
+}
+
+// 旧包设置文件的字段级回退：只补「统一文件里从未写过这个键」的字段（touched 记录原始
+// 键存在性，显式保存过的默认值也算有值 → 旧文件对该字段永久失效）。
+function applyLegacy(snap, map, io, touched) {
+  for (const id of PROVIDER_IDS) {
+    const d = map[id]
+    if (!d || !d.settings) continue
+    const legacy = legacyPartitionSlice(id, io)
+    if (!legacy) continue
+    const keys = Array.isArray(d.settings.keys) ? d.settings.keys : []
+    const merged = Object.assign({}, snap[id])
+    let changed = false
+    for (const k of keys) {
+      if (legacy[k] === undefined) continue
+      if (!touched[id] || !touched[id][k]) { merged[k] = legacy[k]; changed = true }
+    }
+    if (!changed) continue
+    try {
+      const cleaned = d.settings.normalize(merged, (io && io.env) || undefined)
+      if (cleaned && typeof cleaned === 'object') snap[id] = Object.assign(snap[id], cleaned)
+    } catch (e) { }
+  }
   return snap
 }
 
@@ -78,6 +161,11 @@ export function readSettingsFile(io) {
     if (typeof nodeFs.readFileSync !== 'function' || !p) return null
     return normalizeAll(JSON.parse(nodeFs.readFileSync(p, 'utf8')), o)
   } catch (e) { return null }
+}
+
+/** 当前生效设置：统一文件缺失时 = 默认值 + 旧包文件字段级回退（仍不写盘）。 */
+export function effectiveSettings(io) {
+  return readSettingsFile(io) || normalizeAll({}, io)
 }
 
 export function writeSettingsFile(value, io) {
@@ -112,7 +200,7 @@ export function settingsView(io) {
   const o = io || {}
   const map = descriptors(o)
   const fromFile = readSettingsFile(o)
-  const snap = fromFile || defaultSettings(o)
+  const snap = effectiveSettings(o)
   const providers = Object.create(null)
   for (const id of PROVIDER_IDS) {
     const d = map[id]
@@ -141,7 +229,7 @@ export function parseSettingsBody(text, io) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'body must be an object' }
   const o = io || {}
   const map = descriptors(o)
-  const cur = readSettingsFile(o) || defaultSettings(o)
+  const cur = effectiveSettings(o)
   const next = Object.create(null)
   for (const id of PROVIDER_IDS) next[id] = Object.assign({}, cur[id] || {})
   for (const id of Object.keys(raw)) {
