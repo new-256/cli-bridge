@@ -85,6 +85,17 @@ for (const id of PROVIDER_IDS) {
   if (!read('preset/' + ({ agy: 'agy-first', codebuddy: 'codebuddy-first', mimo: 'mimo-first' })[id] + '/plugin-list.mjs')) errors.push('preset/' + id + ' plugin-list.mjs missing')
 }
 
+// 8. 版本双锁：mcp server const + CHANGELOG 顶部条目 === package.json version
+//    （旧仓教训：codebuddy v1.1.8「npm 先发、git 欠账」；这里把两处拉齐成机器约束）
+const mcpSrc = read('mcp/cli-bridge-mcp.mjs') || ''
+const mv = mcpSrc.match(/const SERVER_VERSION\s*=\s*'([^']+)'/)
+if (mv && mv[1] !== pkg.version) errors.push('version drift: mcp SERVER_VERSION ' + mv[1] + ' !== package.json ' + pkg.version)
+if (!mv) errors.push('mcp/cli-bridge-mcp.mjs: SERVER_VERSION const not found')
+const cl = read('CHANGELOG.md') || ''
+const cv = cl.match(/^## \[(\d+\.\d+\.\d+[^\]]*)\]/m)
+if (cv && cv[1] !== pkg.version) errors.push('version drift: CHANGELOG top [' + cv[1] + '] !== package.json ' + pkg.version)
+if (!cv) errors.push('CHANGELOG.md: no keep-a-changelog style version heading found')
+
 if (errors.length) {
   console.error('verify: FAILED\n' + errors.map((e) => '  ✗ ' + e).join('\n'))
   process.exit(1)

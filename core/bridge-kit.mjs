@@ -474,8 +474,9 @@ export function createRunner(o) {
       engine.end(res, cwd); return res
     }
 
-    // 非 spawn 路径（如 mimo 桌面走本地 HTTP）：provider 若给 execute，则完全交给它。
-    if (provider.execute) {
+    // 非 spawn 路径（如 mimo 桌面走本地 HTTP）：provider 若给 execute 且（未给 delegates
+    // 或 delegates(backend)=true）则完全交给它；否则落回通用 pipeline（jobs/重试/弹窗）。
+    if (provider.execute && (!provider.delegates || provider.delegates(backend, args))) {
       engine.begin(cwd)
       try {
         const res = await provider.execute({ args, exec, backend, cwd, built, engine, ctx, o, runSync })

@@ -51,7 +51,8 @@ export default function defineProvider(deps = {}) { return descriptor }
 | `isLimited(res)` | fn→bool | 可选：覆盖 kit 的限流/网络判定（默认 kit `isLimited`）；runner 用 provider 版决定是否弹回退三选一 |
 | `failureHint(res)` | fn→string | 按失败类型给可行动指引（空串=用通用） |
 | `preflight({args,exec,backend,cwd,engine,ctx,o})` | fn | 返回 `{ abort: <结果对象> }` 或 undefined |
-| `execute({args,exec,backend,cwd,built,engine,ctx,o,runSync})` | async fn | **非 spawn 主路径**（mimo 桌面 HTTP 等）给了它则 runner 完全委托 |
+| `execute({args,exec,backend,cwd,built,engine,ctx,o,runSync})` | async fn | **非 spawn 主路径**（mimo 桌面 HTTP 等）；与 `delegates` 配合：runner 在 `delegates(backend,args)` 为真（或未定义 delegates）时完全委托，返回值直接交 engine.end；为假则落回通用 pipeline（jobs/瞬时重试/回退弹窗） |
+| `delegates(backend, args)` | fn→bool | 可选：限定 execute 的接管范围（例：mimo 只接管 mimo-desktop，mimocode 走通用 pipeline）。kit 在委托前已 engine.begin(cwd) 并调过 buildArgv——对不 spawn 的后端 buildArgv 可返回空壳 `{argv:[],mode,timeoutSec}` |
 | ★ `unavailableStatus` | string | 找不到可执行时的 status（旧包各自保持：'CODEBUDDY_UNAVAILABLE' 等由你定，注意 isLimited 认 'CLI_UNAVAILABLE'，特殊名需自行保证限流判定不受影响） |
 | ★ `tools` | object | `{ run:{name,description,inputSchema}, continue:{...}, status:{...} }` 纯对象 ToolDefinition（不含 execute），preset/dynamic 注册用 |
 | ★ `runToolLogic(args, exec)` | async fn | 三形态共用：`this.runner.coreExecute` 已被工厂注入，见下 |
