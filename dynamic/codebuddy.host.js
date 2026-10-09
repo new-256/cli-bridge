@@ -286,7 +286,9 @@ function fallbackResult(res, mode, provider) {
 // ── 展示层 ────────────────────────────────────────────────────────────────────
 function renderResult(value, provider) {
   const v = value || {}
-  const bk = (provider && provider.id) || v.backend || 'CLI'
+  // backendLabel（codebuddy 旧语义 v1.1.0 verbatim：'workbuddy OK'/'codebuddy-intl OK'）：
+  // 结果带具体 backend 时用 backend 标头；agy/mimo 旧包标头是硬编码 provider 名，不开此旗。
+  const bk = (provider && provider.backendLabel && v.backend) || (provider && provider.id) || v.backend || 'CLI'
   if (v.background) return [{ type: 'text', text: bk + ' dispatched in background (mode=' + v.mode + '). jobId=' + v.jobId + '. Collect with job_output.' }]
   if (v.fallback) return [{ type: 'text', text: bk + ' 回退：用户选择使用 DSH 本地 API 配置（原因 ' + v.reason + '）。请改用原生工具/本地模型完成本任务，不要再调 ' + bk + '。' }]
   const head = bk + ' ' + (v.ok ? 'OK' : 'FAILED') + ' [status=' + v.status + ' mode=' + v.mode + (v.modelUsed ? ' model=' + v.modelUsed : '') + (v.retried ? ' retried=1' : '') + (v.sessionId ? ' session=' + v.sessionId : '') + (v.totalTokens != null ? ' tokens=' + v.totalTokens : '') + (v.durationSeconds != null ? ' ' + v.durationSeconds + 's' : '') + ']'
@@ -1311,6 +1313,10 @@ function defineProvider (deps = {}) {
     exeName: 'codebuddy',
     binEnvVars: ['CODEBUDDY_BIN', 'CODEBUDDY_EN_BIN', 'WORKBUDDY_BIN'],
     unavailableStatus: 'CODEBUDDY_UNAVAILABLE',
+    // 旧 renderResult verbatim 语义：标头用具体 backend（'workbuddy OK'），仅当结果
+    // 无 backend 字段时回落 'codebuddy'（= provider.id）。agy/mimo 旧包标头硬编码
+    // provider 名，不设此旗。
+    backendLabel: true,
 
     backends: () => BACKENDS.slice(),
     normalizeBackend,

@@ -744,6 +744,10 @@ export default function defineProvider(deps = {}) {
     exeName: 'codebuddy',
     binEnvVars: ['CODEBUDDY_BIN', 'CODEBUDDY_EN_BIN', 'WORKBUDDY_BIN'],
     unavailableStatus: 'CODEBUDDY_UNAVAILABLE',
+    // 旧 renderResult verbatim 语义：标头用具体 backend（'workbuddy OK'），仅当结果
+    // 无 backend 字段时回落 'codebuddy'（= provider.id）。agy/mimo 旧包标头硬编码
+    // provider 名，不设此旗。
+    backendLabel: true,
 
     backends: () => BACKENDS.slice(),
     normalizeBackend,
