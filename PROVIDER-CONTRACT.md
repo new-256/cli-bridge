@@ -111,6 +111,26 @@ preferredBackend/defaultModel/endpointOverride/codebuddyEnToken 归入 `codebudd
 mimo 的 backend/desktopModel 归入 `mimo` 分区；agy 暂无分区字段可给 `{keys:[],defaults:()=>({}),normalize:()=>({})}`。
 **token 永不回传明文**（keystone 负责掩码）。
 
+`meta(env)` 的返回直接驱动合并后的设置面板（client.js 按它渲染，不认识任何具体字段名）：
+
+```
+meta(env) → {
+  titleSuffix?: string,          // 卡片标题后缀（如 'CodeBuddy'）
+  fields: [ {
+    key: string,                 // 分区字段名
+    label: string,               // 中文标签可，面板统一中文
+    type: 'text' | 'select',     // 缺省 'text'
+    options?: [{value,label}],   // select 用
+    allowCustom?: boolean,       // select 允许自定义输入（defaultModel 就是它）
+    placeholder?: string,
+    note?: string,               // 字段下方说明
+    secret?: boolean             // 凭据字段：必须同时列入 secretKeys
+  } ]
+}
+```
+
+diagnose(settings, env) 返回一行文本（卡片底部「诊断」区）；无诊断给 ''。
+
 ## 4. MCP 形态（`mcp/providers/<id>.mjs`）
 
 统一 stdio JSON-RPC 服务器 `mcp/cli-bridge-mcp.mjs`（keystone）聚合三家工具。每个 provider 导出：
