@@ -68,14 +68,24 @@ test('不传 deps 时桥接行用默认包名（不崩）', () => {
   assert.equal(bridge.name, '@luchenglong/cli-bridge/preset-mimo')
 })
 
-test('standard 其余行逐项透传（除 persona/delegation/桥接外无增删改）', () => {
+test('standard 其余行逐项透传（唯一差异 = delegation persona 注入；其余零增删改）', () => {
   const rows = buildPlugins({})
   const base = standardPluginRows()
   const mine = rows.filter((r) => r.id !== 'cli-bridge-mimo')
   const cmp = (o) => JSON.stringify(o, (k, v) => (typeof v === 'function' ? 'fn' : v))
   assert.equal(mine.length, base.length)
   for (let i = 0; i < base.length; i++) {
-    if (base[i].id === 'persona' || base[i].id === 'delegation') continue
+    if (base[i].id === 'delegation') {
+      // delegation：mimo 唯一语义差异 = spawn/fork 行注入 MiMo-first persona；
+      // 剥掉 persona 后必须与基线逐项一致（防夹带其它改动）。
+      const stripped = JSON.parse(cmp(mine[i]))
+      for (const c of stripped.config) {
+        if (c.config && (c.config.provider === 'spawn' || c.config.provider === 'fork')) delete c.config.persona
+      }
+      assert.equal(JSON.stringify(stripped), cmp(base[i]), 'delegation drift beyond persona')
+      continue
+    }
+    // persona 及其它行：mimo 与官方 standard 逐字一致，纳入比对。
     assert.equal(cmp(mine[i]), cmp(base[i]), 'row drift at ' + base[i].id)
   }
 })
