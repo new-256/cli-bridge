@@ -21,7 +21,7 @@
 // MCP 子进程没有 ctx.emit，这是唯一的跨进程通道（红线：写失败静默，绝不影响工具结果）。
 
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildMcpBridgePayload } from '../core/bridge-kit.mjs'
 import * as agyMcp from './providers/agy.mjs'
@@ -43,7 +43,7 @@ function detectHomeDir() {
 
 const io = {
   fs: { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync },
-  path: { join, dirname, basename: (p) => String(p).split(/[\\/]/).pop() },
+  path: { join, dirname, resolve, sep: process.platform === 'win32' ? '\\' : '/', basename: (p) => String(p).split(/[\\/]/).pop() },
   homeDir: detectHomeDir(),
   env: process.env,
   log: (msg) => { try { process.stderr.write('[' + SERVER_NAME + '] ' + msg + '\n') } catch (e) { } }
@@ -134,7 +134,7 @@ async function handleLine(line) {
 
 if (process.argv.includes('--check')) {
   const report = { ok: true, server: SERVER_NAME, version: SERVER_VERSION, providers: [], errors: [] }
-  for (const p of PROVIDERS) {
+  for (const p of selectedProviders()) {
     const entry = { id: p.meta.id, label: p.meta.label, version: p.meta.version, tools: [] }
     try {
       const tools = p.tools(process.env)
