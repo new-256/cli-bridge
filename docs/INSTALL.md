@@ -103,7 +103,10 @@ DSH 设置页 →「CLI Bridge」：每家一张卡片（字段由 provider 声�
 | `AGY_BIN` / `AGY_CLI` | agy 可执行覆盖 |
 | `AGY_MCP_CWD` | agy 默认工作目录 |
 | `CLI_BRIDGE_AGY_QUOTA`（兼容旧 `AGY_QUOTA_SCRIPT`） | 额度脚本路径覆盖（默认包内 bin） |
-| `CODEBUDDY_BIN` / `CODEBUDDY_EN_BIN` / `WORKBUDDY_BIN` / `WORKBUDDY_TOKEN` | codebuddy 各家可执行/凭据 |
+| `CODEBUDDY_BIN` / `CODEBUDDY_EN_BIN` / `WORKBUDDY_BIN` | codebuddy 各家可执行覆盖 |
+| `CODEBUDDY_AUTH_TOKEN` / `CODEBUDDY_BASE_URL` / `CODEBUDDY_INTERNET_ENVIRONMENT` | codebuddy 端点与凭据注入 |
+| `CODEBUDDY_AUTH_DIR` / `CODEBUDDY_CREDENTIALS_DIR` / `CODEBUDDY_MODELS_FILE` | 登录域文件目录 / DSH 凭据库目录（内放 `WORKBUDDY_TOKEN:` 等）/ 模型目录注入（旧包即有，多为测试与诊断覆盖；`WORKBUDDY_TOKEN` 本身不是环境变量，是凭据文件里的键） |
+| `CODEBUDDY_MCP_CWD` | codebuddy MCP 默认工作目录（仅 MCP 面；preset/dynamic 不读） |
 | `CODEBUDDY_AUTH_TOKEN` / `CODEBUDDY_BASE_URL` / `CODEBUDDY_INTERNET_ENVIRONMENT` | codebuddy 端点与凭据注入 |
 | `CODEBUDDY_SETTINGS_FILE` | 旧 codebuddy 设置文件覆盖（迁移读） |
 | `CODEBUDDY_MCP_ALLOWED_ROOTS` | codebuddy MCP 的 cwd 白名单 |
