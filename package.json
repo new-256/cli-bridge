@@ -39,7 +39,7 @@
     "build": "node scripts/build.mjs",
     "test": "node scripts/build.mjs --check && node --test",
     "verify": "node scripts/verify.mjs",
-    "check": "node scripts/build.mjs --check && node scripts/verify.mjs && node mcp/cli-bridge-mcp.mjs --check",
+    "check": "node scripts/build.mjs --check && node scripts/verify.mjs && node --test && node mcp/cli-bridge-mcp.mjs --check",
     "prepack": "node scripts/verify.mjs && node scripts/build.mjs --check",
     "deploy:local": "node scripts/deploy.mjs"
   },
