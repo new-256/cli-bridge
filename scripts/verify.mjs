@@ -13,7 +13,7 @@
 //   6. dsh 字段齐全（client.platform=web、bundle.patch 路径存在）
 // 任一失败 → exit 1 并逐条列出。
 
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -95,6 +95,51 @@ const cl = read('CHANGELOG.md') || ''
 const cv = cl.match(/^## \[(\d+\.\d+\.\d+[^\]]*)\]/m)
 if (cv && cv[1] !== pkg.version) errors.push('version drift: CHANGELOG top [' + cv[1] + '] !== package.json ' + pkg.version)
 if (!cv) errors.push('CHANGELOG.md: no keep-a-changelog style version heading found')
+
+// 9. 凭据泄漏扫描（发布安全红线）：tests/fixtures 与全部源码里绝不能出现真实凭据
+//    形态的长随机串。旧仓 test/fixtures/credentials/.credentials.yaml 是真实设备授权
+//    文件（36 字节 base64 形态）—— 移植测试时照抄 fixtures 目录就会把它带进 tarball。
+//    规则：文件名含 credential/token/auth/secret（.yaml/.yml/.json/.info）→ 拒绝；
+//    任何被打包文本文件里 key:value 的 value 是 ≥24 位纯随机 [A-Za-z0-9+/=] 且键名
+//    疑似凭据（token|secret|password|credential|apikey|api_key|auth）→ 拒绝。
+//    白名单：掩码示例、假 fixture（fake-*）、env 变量名引用。
+const CRED_FILE_RE = /\.(ya?ml|json|info|txt|local|env)$/i
+const CRED_NAME_RE = /(credential|token|secret|password|cookie|auth)/i
+const CRED_LINE_RE = /(^|[^A-Za-z0-9_])([A-Za-z0-9_]*(token|secret|password|credential|api_?key|auth)[A-Za-z0-9_]*)\s*[:=]\s*['"]?([A-Za-z0-9+/=._-]{24,})['"]?/gi
+const CRED_ALLOW_RE = /(fake|example|redacted|placeholder|\*\*\*|<.*>|\{\{|process\.env|CODEBUDDY_|AGY_|MIMO_|CLI_BRIDGE_)/i
+function walkFiles(dir, out) {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (e.name === 'node_modules' || e.name === '.git') continue
+    const p = join(dir, e.name)
+    if (e.isDirectory()) {
+      walkFiles(p, out)
+    } else out.push(p)
+  }
+  return out
+}
+const allFiles = walkFiles(ROOT, [])
+for (const f of allFiles) {
+  const relc = f.slice(ROOT.length + 1)
+  if (!/\.(mjs|js|cjs|json|ya?ml|md|yml|txt|svg|css|html|info|local)$/i.test(relc)) continue
+  const base = relc.split(/[\\/]/).pop()
+  if (CRED_NAME_RE.test(base) && !/^fake/i.test(base) && CRED_FILE_RE.test(base)) {
+    const txt = readFileSync(f, 'utf8')
+    if (txt.trim().length) { errors.push('credential-shaped fixture committed: ' + relc + ' (make it fake-* or env-driven)') }
+    continue
+  }
+}
+for (const f of allFiles) {
+  const relc = f.slice(ROOT.length + 1)
+  if (!/\.(mjs|js|cjs|json|ya?ml|md)$/i.test(relc)) continue
+  const txt = readFileSync(f, 'utf8')
+  for (const m of txt.matchAll(CRED_LINE_RE)) {
+    if (CRED_ALLOW_RE.test(m[0])) continue
+    const val = m[4]
+    if (!/[A-Za-z]/.test(val) || !/[0-9]/.test(val) || !/[+/=._-]/.test(val)) continue
+    errors.push('possible credential literal in ' + relc + ': ' + m[2].slice(0, 40) + '=…(random24+)')
+  }
+}
+ok.push('credential scan clean (' + allFiles.length + ' files)')
 
 if (errors.length) {
   console.error('verify: FAILED\n' + errors.map((e) => '  ✗ ' + e).join('\n'))
