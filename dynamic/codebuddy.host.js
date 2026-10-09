@@ -1550,10 +1550,10 @@ return {
       return [nodeExe, binPath]
     }
 
-    // 旧仓 CWD_FALLBACK 硬编码机器绝对路径；新语义：CODEBUDDY_MCP_CWD >
-    // workspaceRoot > process.cwd() > 旧硬编码兜底（保持旧 dynamic 的最终行为）。
+    // 旧仓 CWD_FALLBACK 硬编码机器绝对路径：本形态保持旧 dynamic verbatim 行为
+    // （Lead 定案：与旧 dynamic 逐字一致；CODEBUDDY_MCP_CWD 优先仅为 MCP 面语义，
+    // 旧 dynamic 不读它）。
     function getCwdFallback() {
-      if (env.CODEBUDDY_MCP_CWD) return String(env.CODEBUDDY_MCP_CWD)
       if (sandboxPolicy && typeof sandboxPolicy.workspaceRoot === 'string' && sandboxPolicy.workspaceRoot) return sandboxPolicy.workspaceRoot
       if (typeof process !== 'undefined' && typeof process.cwd === 'function') { try { return process.cwd() } catch (e) {} }
       return 'C:\\Users\\lcl\\Desktop\\codebuddy-bridge'

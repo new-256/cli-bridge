@@ -25,7 +25,8 @@ export const name = 'cli-bridge-codebuddy'
 export const inject = ['tools', 'subprocess', 'systemPrompt', 'timer']
 
 const OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
-// 旧 preset CWD_FALLBACK verbatim（workspaceRoot 不可得时的机器默认）。
+// 旧 preset CWD_FALLBACK verbatim（机器默认路径，Lead 定案保留：动态解析工作目录
+// 只在 keystone indicator 侧做，preset 形态行为与旧包逐字一致）。
 const CWD_FALLBACK = 'C:\\Users\\lcl\\Desktop\\codebuddy-bridge'
 
 export function apply(ctx, config) {
