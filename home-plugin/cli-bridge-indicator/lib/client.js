@@ -1,0 +1,433 @@
+// cli-bridge-indicator — browser half (home-level plugin). 一盏灯聚合三个 CLI：AGY / CB / MIMO。
+//
+// 合并 agy-indicator / codebuddy-indicator / mimo-indicator 三个家级客户端为单文件：
+//   每 1.2s 轮询 GET /cli-bridge/status → { providers:{ agy,codebuddy,mimo } }，
+//   每个 provider 各画一组 pill（有活动=全局显示；空转「就绪」灯=仅本会话该 preset 时显示）。
+//   settings.section 一个分区「CLI Bridge」，按 provider 卡片渲染偏好（字段由后端 meta 驱动，
+//   本文件不硬编码任何 provider 专有字段 —— provider 侧改设置项无需动这层）。
+//
+// running→蓝呼吸 ⟳  ok→绿 ✓  failed→红 ✗  fallback→琥珀 ↩  idle→灰 标签。
+//
+// ⚠⚠⚠ 红线 4（历史事故：agy v1.6.1 / codebuddy v1.1.8）：下方 __ModuleLoader__.load({ id })
+//   必须【逐字等于 npm 包名】"@luchenglong/cli-bridge"（scoped 包=含 @scope/ 的完整名）。
+//   client-modules 的 graph row 以 package name 为 id（exports["./client"] 归属包），bundle
+//   脚本执行后按 loaded without registering "<packageName>" 校验；一旦不等 → 整个 client
+//   combo 加载失败 → DSH 启动致命屏 → 强制安全模式。slot id 与 CSS 标记是另一命名空间，可自取。
+//   改包名 = 必改此 id，二者绑定，永远一起改。
+
+window.__ModuleLoader__.load({
+  id: "@luchenglong/cli-bridge",
+  factory: (require) => {
+    var module = { exports: {} };
+    var exports = module.exports;
+    Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
+
+    let react = require("react");
+
+    // provider 展示元数据（与后端 registry 对齐；渲染顺序）。
+    var PROVIDERS = [
+      { id: "agy", label: "AGY", presetId: "cordis-agy" },
+      { id: "codebuddy", label: "CB", presetId: "codebuddy-first" },
+      { id: "mimo", label: "MIMO", presetId: "cordis-mimo" }
+    ];
+
+    const CSS = [
+      ".clb-row{display:inline-flex;align-items:center;gap:6px}",
+      ".clb-ind{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:12px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);font-size:12px;line-height:1;color:var(--dsw-alias-label-secondary);white-space:nowrap;user-select:none}",
+      ".clb-ind:hover{border-color:var(--dsw-alias-border-l2);cursor:pointer}",
+      ".clb-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:var(--dsw-alias-label-secondary)}",
+      ".clb-ind b{font-weight:600}",
+      ".clb-run .clb-dot{background:var(--dsw-static-blue-500,#3b82f6);animation:clb-pulse 1s ease-in-out infinite}",
+      ".clb-ok .clb-dot{background:var(--dsw-static-green-500,#22c55e)}",
+      ".clb-fail .clb-dot{background:var(--dsw-alias-state-error-primary)}",
+      ".clb-fb .clb-dot{background:var(--dsw-alias-state-warn-primary)}",
+      ".clb-run{color:var(--dsw-static-blue-500,#3b82f6);border-color:var(--dsw-static-blue-500,#3b82f6)}",
+      ".clb-ok{color:var(--dsw-static-green-500,#22c55e);border-color:var(--dsw-static-green-500,#22c55e)}",
+      ".clb-fb{color:var(--dsw-alias-state-warn-primary);border-color:var(--dsw-alias-state-warn-primary)}",
+      "@keyframes clb-pulse{0%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.72)}100%{opacity:1;transform:scale(1)}}",
+      ".clb-pop-overlay{position:fixed;inset:0;background:rgba(0,0,0,.32);z-index:10000;display:flex;align-items:center;justify-content:center}",
+      ".clb-pop-panel{width:560px;max-width:92vw;max-height:76vh;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.35);font-size:12px;line-height:1.5;color:var(--dsw-alias-label-primary);overflow:hidden}",
+      ".clb-pop-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--dsw-alias-border-l1);font-weight:600}",
+      ".clb-pop-close{border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);border-radius:6px;width:22px;height:22px;line-height:1;font-size:13px;cursor:pointer}",
+      ".clb-pop-close:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l2)}",
+      ".clb-pop-body{overflow:auto;padding:12px 14px}",
+      ".clb-pop-sec{margin-bottom:14px;padding-bottom:12px;border-bottom:1px dashed var(--dsw-alias-border-l1)}",
+      ".clb-pop-sec:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}",
+      ".clb-pop-sech{font-weight:600;margin-bottom:6px}",
+      ".clb-pop-proj{margin:6px 0;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px}",
+      ".clb-pop-proj-head{font-weight:600;margin-bottom:4px}",
+      ".clb-pop-mono{font-family:Consolas,Menlo,monospace;font-size:11px;color:var(--dsw-alias-label-secondary)}",
+      ".clb-pop-line{padding:1px 0}",
+      ".clb-pop-cur{background:rgba(59,130,246,.12);border-radius:4px;padding:3px 6px;margin:4px 0}",
+      ".clb-pop-empty{color:var(--dsw-alias-label-secondary);padding:4px 0}",
+      // ── 设置面板 ──────────────────────────────────────────────────────────
+      ".clbs-root{display:flex;flex-direction:column;gap:16px;max-width:720px;font-size:13px;line-height:1.55;color:var(--dsw-alias-label-primary)}",
+      ".clbs-h{font-size:14px;font-weight:600}",
+      ".clbs-sub{color:var(--dsw-alias-label-secondary);font-size:12px;margin-top:2px}",
+      ".clbs-card{border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:12px 14px}",
+      ".clbs-card-h{font-weight:600;font-size:13px;margin-bottom:10px}",
+      ".clbs-grid{display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center}",
+      ".clbs-label{color:var(--dsw-alias-label-secondary);text-align:right;font-size:12px}",
+      ".clbs-ctl{display:flex;flex-direction:column;gap:4px;min-width:0}",
+      ".clbs-note{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));font-size:11px}",
+      ".clbs-input,.clbs-select{width:100%;box-sizing:border-box;height:28px;padding:0 8px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-input,var(--dsw-alias-bg-layer-2));color:var(--dsw-alias-label-primary);font-size:12px;font-family:inherit;outline:none}",
+      ".clbs-input:focus,.clbs-select:focus{border-color:var(--dsw-alias-border-brand,var(--dsw-static-blue-500,#3b82f6))}",
+      ".clbs-check{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dsw-alias-label-secondary);cursor:pointer;user-select:none}",
+      ".clbs-actions{display:flex;align-items:center;gap:10px}",
+      ".clbs-btn{height:28px;padding:0 14px;border-radius:6px;border:1px solid var(--dsw-alias-border-brand,var(--dsw-static-blue-500,#3b82f6));background:var(--dsw-static-blue-500,#3b82f6);color:#fff;font-size:12px;cursor:pointer}",
+      ".clbs-btn:hover{opacity:.9}",
+      ".clbs-btn:disabled{opacity:.5;cursor:default}",
+      ".clbs-btn-ghost{border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary)}",
+      ".clbs-msg{font-size:12px}",
+      ".clbs-msg-ok{color:var(--dsw-static-green-500,#22c55e)}",
+      ".clbs-msg-err{color:var(--dsw-alias-state-error-primary)}",
+      ".clbs-diag{margin-top:8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;overflow:hidden}",
+      ".clbs-diag-h{padding:6px 10px;background:var(--dsw-alias-bg-layer-2);font-weight:600;font-size:12px;border-bottom:1px solid var(--dsw-alias-border-l1)}",
+      ".clbs-diag-row{display:grid;grid-template-columns:150px 1fr auto;gap:8px;padding:7px 10px;border-bottom:1px dashed var(--dsw-alias-border-l1);align-items:center;font-size:12px}",
+      ".clbs-diag-row:last-child{border-bottom:none}",
+      ".clbs-diag-mono{font-family:Consolas,Menlo,monospace;font-size:11px;color:var(--dsw-alias-label-secondary);word-break:break-all}",
+      ".clbs-badge{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 7px;border-radius:9px;font-size:11px;white-space:nowrap}",
+      ".clbs-badge-ok{color:var(--dsw-static-green-500,#22c55e);border:1px solid var(--dsw-static-green-500,#22c55e)}",
+      ".clbs-badge-warn{color:var(--dsw-alias-state-warn-primary);border:1px solid var(--dsw-alias-state-warn-primary)}",
+      ".clbs-badge-err{color:var(--dsw-alias-state-error-primary);border:1px solid var(--dsw-alias-state-error-primary)}"
+    ].join("");
+    if (typeof document !== "undefined" && document.querySelector('style[data-plugin-css="cli-bridge-indicator"]') === null) {
+      const tag = document.createElement("style");
+      tag.setAttribute("data-plugin", "cli-bridge-indicator");
+      tag.setAttribute("data-plugin-css", "cli-bridge-indicator");
+      tag.textContent = CSS;
+      document.head.appendChild(tag);
+    }
+
+    function pillClass(state) {
+      if (state === "running") return " clb-run";
+      if (state === "ok") return " clb-ok";
+      if (state === "failed") return " clb-fail";
+      if (state === "fallback") return " clb-fb";
+      return "";
+    }
+    function pillText(label, state, running) {
+      if (state === "running") return "\u27F3 " + label + (running > 1 ? " \u00D7" + running : "");
+      if (state === "ok") return "\u2713 " + label;
+      if (state === "failed") return "\u2717 " + label;
+      if (state === "fallback") return "\u21A9 " + label;
+      return label;
+    }
+    function argText(a) {
+      if (a === undefined || a === null) return "";
+      try { const j = JSON.stringify(a); return j.length > 140 ? j.slice(0, 137) + "\u2026" : j; } catch (e) { return String(a); }
+    }
+
+    function Pill(props) {
+      const p = props.p, label = props.label;
+      const parts = [];
+      parts.push("project: " + (p.name || p.cwd));
+      if (p.current) { const c = p.current; parts.push("step " + c.stepIndex + " \u2192 " + c.tool + (c.args ? " " + argText(c.args) : "")); }
+      else if (p.running > 0) parts.push("(starting / thinking)");
+      if (p.trail && p.trail.length) parts.push("recent: " + p.trail.slice(-3).map(function (e) { return e.state + " " + e.tool; }).join(" | "));
+      if (p.lastStatus) parts.push("last=" + p.lastStatus + (p.lastSessionId ? " " + String(p.lastSessionId).slice(0, 8) : ""));
+      if (p.lastBackend) parts.push("backend=" + p.lastBackend);
+      return react.createElement("div", { className: "clb-ind" + pillClass(p.state), title: label.toLowerCase() + " [" + p.state + (p.running > 0 ? " \u00D7" + p.running : "") + "] " + p.cwd + "\n" + parts.join("\n"), onClick: props.onClick },
+        react.createElement("span", { className: "clb-dot" }),
+        react.createElement("span", null, react.createElement("b", null, pillText(label, p.state, p.running))));
+    }
+
+    function ProjectRow(props) {
+      const p = props.p;
+      const head = (p.state === "running" ? "\u27F3 " : p.state === "ok" ? "\u2713 " : p.state === "failed" ? "\u2717 " : p.state === "fallback" ? "\u21A9 " : "") + (p.name || p.cwd);
+      const badge = "[" + p.state + (p.running > 0 ? " \u00D7" + p.running : "") + "]";
+      return react.createElement("div", { className: "clb-pop-proj" },
+        react.createElement("div", { className: "clb-pop-proj-head" }, head, " ", react.createElement("span", { className: "clb-pop-mono" }, badge)),
+        react.createElement("div", { className: "clb-pop-line clb-pop-mono" }, p.cwd),
+        (function () {
+          if (p.current) { const c = p.current; return react.createElement("div", { className: "clb-pop-cur" },
+            react.createElement("div", null, "当前: step " + c.stepIndex + " \u2192 " + c.tool),
+            react.createElement("div", { className: "clb-pop-mono" }, c.args ? argText(c.args) : "")); }
+          if (p.running > 0) return react.createElement("div", { className: "clb-pop-cur" }, "(starting / thinking\u2026)");
+          return null;
+        })(),
+        (p.trail && p.trail.length) ? react.createElement("div", null,
+          react.createElement("div", { className: "clb-pop-line", style: { marginTop: "6px", color: "var(--dsw-alias-label-secondary)" } }, "最近步骤:"),
+          p.trail.slice(-6).map(function (e, j) {
+            return react.createElement("div", { key: "t" + j, className: "clb-pop-line clb-pop-mono" },
+              "[" + e.state + "] step " + e.stepIndex + " " + e.tool + (e.args ? " " + argText(e.args) : ""));
+          })) : null,
+        (p.running > 0 && p.updatedAt) ? react.createElement("div", { className: "clb-pop-line", style: { marginTop: "6px", color: (Date.now() - p.updatedAt > 90000 ? "var(--dsw-alias-state-warn-primary)" : "var(--dsw-alias-label-secondary)") } },
+          "无活动 " + Math.max(0, Math.round((Date.now() - p.updatedAt) / 1000)) + "s" + (Date.now() - p.updatedAt > 90000 ? "（长任务请耐心；疑似卡住可取消重试）" : "")) : null,
+        (p.lastStatus) ? react.createElement("div", { className: "clb-pop-line clb-pop-mono", style: { marginTop: "6px" } },
+          "last=" + p.lastStatus + (p.lastSessionId ? " " + String(p.lastSessionId).slice(0, 8) : "")) : null);
+    }
+
+    function Popup(props) {
+      const s = props.s, onClose = props.onClose;
+      const sections = [];
+      for (const meta of PROVIDERS) {
+        const b = (s && s.providers && s.providers[meta.id]) || null;
+        const ready = props.iAm[meta.id];
+        const hasProjects = b && Array.isArray(b.projects) && b.projects.length;
+        if (!hasProjects && !(ready === true || (ready === null && b && b.presetActive))) continue;
+        let rows;
+        if (hasProjects) rows = b.projects.map(function (p, i) { return react.createElement(ProjectRow, { key: p.cwd || ("p" + i), p: p }); });
+        else rows = react.createElement("div", { className: "clb-pop-empty" }, "（就绪，暂无活动）");
+        const modeText = ready === true ? " · 本会话 " + meta.label + " 优先" : (ready === false ? " · 普通模式" : (b && b.presetActive ? " · " + meta.label + " 优先（其他会话）" : " · 普通模式"));
+        sections.push(react.createElement("div", { key: meta.id, className: "clb-pop-sec" },
+          react.createElement("div", { className: "clb-pop-sech" }, meta.label + " 状态" + (b && b.state ? " · " + b.state + (b.running > 0 ? " (" + b.running + " running)" : "") : "") + modeText),
+          rows));
+      }
+      if (!sections.length) sections.push(react.createElement("div", { className: "clb-pop-empty" }, "暂无 CLI Bridge 活动"));
+      return react.createElement("div", { className: "clb-pop-overlay", onClick: onClose },
+        react.createElement("div", { className: "clb-pop-panel", onClick: function (e) { e.stopPropagation(); } },
+          react.createElement("div", { className: "clb-pop-head" },
+            react.createElement("span", null, "CLI Bridge"),
+            react.createElement("button", { className: "clb-pop-close", title: "关闭 (Esc)", onClick: onClose }, "\u2715")),
+          react.createElement("div", { className: "clb-pop-body" }, sections)));
+    }
+
+    // per-session preset 三态判定（同 codebuddy v1.1.3：host 名单 + 客户端摘要双通道，
+    // 任一肯定即肯定；都否定才否定；无结论回退全局租约）。myPreset 是会话的单个
+    // agentPreset 值，对每个 provider 比较各自的 presetId。
+    const PRESET_UNKNOWN = "\u0000unknown";
+    function subscribeNoop() { return function () { }; }
+    function presetOfSummary(sum) {
+      if (!sum) return PRESET_UNKNOWN;
+      if (sum.projectionValues && typeof sum.projectionValues.agentPreset === "string") return sum.projectionValues.agentPreset;
+      if (typeof sum.agentPreset === "string") return sum.agentPreset;
+      return PRESET_UNKNOWN;
+    }
+    function presetOfState(state, sessionId) {
+      try { if (!state || !sessionId || !state.byId) return PRESET_UNKNOWN; return presetOfSummary(state.byId[sessionId]); }
+      catch (e) { return PRESET_UNKNOWN; }
+    }
+
+    function Indicator(props) {
+      const p = props || {};
+      const sessionId = (typeof p.sessionId === "string" && p.sessionId) || (typeof p.injectedSessionId === "string" && p.injectedSessionId) || undefined;
+      const useSess = typeof p.useSessions === "function" ? p.useSessions : null;
+      const sessionsSvc = p.sessionsSvc;
+      const st = react.useState(null); const s = st[0]; const setS = st[1];
+      const ot = react.useState(false); const open = ot[0]; const setOpen = ot[1];
+      let myPreset;
+      if (useSess) {
+        myPreset = useSess(function (state) { return presetOfState(state, sessionId); });
+      } else {
+        myPreset = react.useSyncExternalStore(
+          (sessionsSvc && sessionsSvc.list) ? sessionsSvc.list.subscribe : subscribeNoop,
+          function () {
+            try {
+              if (!sessionsSvc || !sessionsSvc.list) return PRESET_UNKNOWN;
+              return presetOfState(sessionsSvc.list.getSnapshot(), sessionId);
+            } catch (e) { return PRESET_UNKNOWN; }
+          });
+      }
+      const presetKnown = myPreset !== PRESET_UNKNOWN;
+      const iAm = {};
+      for (const meta of PROVIDERS) {
+        const b = (s && s.providers && s.providers[meta.id]) || null;
+        const hostList = (b && Array.isArray(b.presetSessions)) ? b.presetSessions : null;
+        const inHostList = !!(hostList && sessionId && hostList.indexOf(sessionId) >= 0);
+        const clientSaysYes = presetKnown && myPreset === meta.presetId;
+        iAm[meta.id] = (inHostList || clientSaysYes)
+          ? true
+          : (presetKnown ? false
+              : ((hostList && hostList.length > 0 && sessionId) ? false : null));
+      }
+      react.useEffect(function () {
+        let alive = true; let timerId = null;
+        const tick = function () {
+          fetch("/cli-bridge/status", { cache: "no-store" })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (v) { if (alive) setS(v); })
+            .catch(function () { });
+        };
+        tick(); timerId = setInterval(tick, 1200);
+        return function () { alive = false; if (timerId !== null) clearInterval(timerId); };
+      }, []);
+      react.useEffect(function () {
+        if (!open) return;
+        const h = function (e) { if (e.key === "Escape") setOpen(false); };
+        window.addEventListener("keydown", h);
+        return function () { window.removeEventListener("keydown", h); };
+      }, [open]);
+      const pills = [];
+      for (const meta of PROVIDERS) {
+        const b = (s && s.providers && s.providers[meta.id]) || null;
+        if (!b) continue;
+        const hasProjects = Array.isArray(b.projects) && b.projects.length;
+        const readyShow = iAm[meta.id] === true || (iAm[meta.id] === null && b.presetActive);
+        if (!hasProjects && !readyShow) continue;
+        if (hasProjects) {
+          for (let i = 0; i < b.projects.length; i++) pills.push(react.createElement(Pill, { key: meta.id + ":" + (b.projects[i].cwd || i), p: b.projects[i], label: meta.label, onClick: function () { setOpen(true); } }));
+        } else {
+          const state = b.state || "idle";
+          let text = meta.label + " 就绪";
+          if (state === "running") text = meta.label + " 工作中" + (b.running > 1 ? " \u00D7" + b.running : "");
+          else if (state === "ok") text = meta.label;
+          else if (state === "failed") text = meta.label + " 失败";
+          else if (state === "fallback") text = "本地回退";
+          pills.push(react.createElement("div", { key: meta.id + ":ready", className: "clb-ind" + pillClass(state), title: meta.id + " state=" + state + " running=" + (b.running || 0), onClick: function () { setOpen(true); } },
+            react.createElement("span", { className: "clb-dot" }), react.createElement("span", null, text)));
+        }
+      }
+      if (!pills.length) return null;
+      const light = react.createElement("div", { className: "clb-row" }, pills);
+      if (!open) return light;
+      return react.createElement(react.Fragment, null, light,
+        react.createElement(Popup, { s: s, iAm: iAm, onClose: function () { setOpen(false); } }));
+    }
+
+    // ── 设置面板（settings.section）：字段由后端 providers[id].meta.fields 驱动 ──
+    function Field(props) {
+      const f = props.field, val = props.value, onChange = props.onChange, secretState = props.secret;
+      if (f.type === "select") {
+        const opts = Array.isArray(f.options) ? f.options : [];
+        const isKnown = opts.some(function (o) { return String(o.value) === String(val); });
+        const CUSTOM = "__clb_custom__";
+        // wantCustom：用户显式选了「自定义…」后保持输入框可见（即使此刻值为空）。
+        const wc = react.useState(false); const wantCustom = wc[0]; const setWantCustom = wc[1];
+        const showCustom = f.allowCustom && (wantCustom || (val !== "" && !isKnown));
+        const sel = showCustom && (wantCustom || !isKnown) && val !== "" ? val : (val === "" && wantCustom ? CUSTOM : val);
+        const onPick = function (e) {
+          const v = e.target.value;
+          if (v === CUSTOM) { setWantCustom(true); onChange(""); return; }
+          setWantCustom(false); onChange(v);
+        };
+        return react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "4px" } },
+          react.createElement("select", { className: "clbs-select", value: sel, onChange: onPick },
+            react.createElement("option", { key: "__empty", value: "" }, f.placeholder || "（留空 = 默认）"),
+            opts.map(function (o) { return react.createElement("option", { key: o.value, value: o.value }, o.label || o.value); }),
+            f.allowCustom ? react.createElement("option", { key: "__custom", value: CUSTOM }, "自定义…（手动输入）") : null),
+          showCustom ? react.createElement("input", { className: "clbs-input", value: val, onChange: function (e) { onChange(e.target.value); }, placeholder: "手动输入值", spellCheck: false }) : null,
+          f.note ? react.createElement("div", { className: "clbs-note" }, f.note) : null);
+      }
+      if (f.secret) {
+        return react.createElement("div", { className: "clbs-ctl" },
+          react.createElement("input", { className: "clbs-input", type: "password", value: val, onChange: function (e) { onChange(e.target.value); }, placeholder: secretState && secretState.set ? ("已保存 " + secretState.hint + "，留空保持不变") : (f.placeholder || "留空保持不变"), spellCheck: false, autoComplete: "off" }),
+          react.createElement("label", { className: "clbs-check" },
+            react.createElement("input", { type: "checkbox", checked: !!props.wantClear, onChange: function (e) { props.onClear(e.target.checked); } }),
+            "清除已保存的值"),
+          f.note ? react.createElement("div", { className: "clbs-note" }, f.note) : null);
+      }
+      return react.createElement("div", { className: "clbs-ctl" },
+        react.createElement("input", { className: "clbs-input", value: val, onChange: function (e) { onChange(e.target.value); }, placeholder: f.placeholder || "", spellCheck: false }),
+        f.note ? react.createElement("div", { className: "clbs-note" }, f.note) : null);
+    }
+
+    function ProviderSettingsCard(props) {
+      const meta = props.meta, view = props.view, form = props.form, setField = props.setField, clears = props.clears, setClear = props.setClear;
+      if (!view || !view.present) return null;
+      const fields = (view.meta && Array.isArray(view.meta.fields)) ? view.meta.fields : [];
+      return react.createElement("div", { className: "clbs-card" },
+        react.createElement("div", { className: "clbs-card-h" }, meta.label + (view.meta && view.meta.titleSuffix ? " · " + view.meta.titleSuffix : "")),
+        fields.length ? react.createElement("div", { className: "clbs-grid" },
+          fields.map(function (f) {
+            return react.createElement(react.Fragment, { key: f.key },
+              react.createElement("label", { className: "clbs-label" }, f.label || f.key),
+              react.createElement(Field, {
+                field: f, value: form[f.key] || "", secret: view.secrets && view.secrets[f.key], wantClear: !!(clears[meta.id] && clears[meta.id][f.key]),
+                onChange: function (v) { setField(meta.id, f.key, v); }, onClear: function (b) { setClear(meta.id, f.key, b); }
+              }));
+          })) : react.createElement("div", { className: "clbs-note" }, "（无可配置项）"),
+        (view.diagnosis) ? react.createElement("div", { className: "clbs-diag" },
+          react.createElement("div", { className: "clbs-diag-h" }, "诊断"),
+          react.createElement("div", { style: { padding: "7px 10px", fontSize: "12px" } }, view.diagnosis)) : null);
+    }
+
+    function SettingsPanel() {
+      const vt = react.useState(null); const view = vt[0]; const setView = vt[1];
+      const ft = react.useState({}); const form = ft[0]; const setForm = ft[1];
+      const ct = react.useState({}); const clears = ct[0]; const setClears = ct[1];
+      const mt = react.useState(null); const msg = mt[0]; const setMsg = mt[1];
+      const lt = react.useState(false); const loading = lt[0]; const setLoading = lt[1];
+
+      const adopt = react.useCallback(function (v) {
+        setView(v);
+        const next = {};
+        for (const meta of PROVIDERS) {
+          const pv = (v && v.providers && v.providers[meta.id]) || {};
+          next[meta.id] = Object.assign({}, pv.values || {});
+          const secs = pv.secrets || {};
+          for (const k of Object.keys(secs)) next[meta.id][k] = "";
+        }
+        setForm(next);
+      }, []);
+      const reload = react.useCallback(function () {
+        fetch("/cli-bridge/settings", { cache: "no-store" })
+          .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)); })
+          .then(adopt)
+          .catch(function (e) { setMsg({ kind: "err", text: "读取失败：" + e.message }); });
+      }, [adopt]);
+      react.useEffect(function () { reload(); }, [reload]);
+
+      const setField = function (id, k, v) { setForm(function (f) { const n = Object.assign({}, f); n[id] = Object.assign({}, n[id]); n[id][k] = v; return n; }); };
+      const setClear = function (id, k, b) { setClears(function (c) { const n = Object.assign({}, c); n[id] = Object.assign({}, n[id]); n[id][k] = b; return n; }); };
+
+      const save = function () {
+        if (!view || loading) return;
+        setLoading(true); setMsg(null);
+        const body = {};
+        for (const meta of PROVIDERS) {
+          const pv = (view.providers && view.providers[meta.id]) || {};
+          if (!pv.present) continue;
+          const fields = (pv.meta && Array.isArray(pv.meta.fields)) ? pv.meta.fields : [];
+          const part = {};
+          for (const f of fields) {
+            const v = (form[meta.id] && form[meta.id][f.key]) || "";
+            if (f.secret) {
+              if (v) part[f.key] = v;
+              else if (clears[meta.id] && clears[meta.id][f.key]) part[f.key + "Clear"] = true;
+            } else part[f.key] = v;
+          }
+          body[meta.id] = part;
+        }
+        fetch("/cli-bridge/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+          .then(function (r) { return r.json().then(function (j) { return { code: r.status, j: j }; }); })
+          .then(function (res) {
+            setLoading(false);
+            if (res.code === 200 && res.j && res.j.ok) {
+              setClears({}); if (res.j.settings) adopt(res.j.settings);
+              setMsg({ kind: "ok", text: "已保存 ✓ 立即生效（preset / 动态 / MCP 三形态共享同一份设置）" });
+            } else setMsg({ kind: "err", text: "保存失败：" + ((res.j && res.j.error) || ("HTTP " + res.code)) });
+          })
+          .catch(function (e) { setLoading(false); setMsg({ kind: "err", text: "保存失败：" + e.message }); });
+      };
+
+      if (!view) {
+        return react.createElement("div", { className: "clbs-root" },
+          react.createElement("div", { className: "clbs-h" }, "CLI Bridge"),
+          react.createElement("div", { className: "clbs-sub" }, msg ? msg.text : "加载设置…"));
+      }
+      return react.createElement("div", { className: "clbs-root" },
+        react.createElement("div", null,
+          react.createElement("div", { className: "clbs-h" }, "CLI Bridge"),
+          react.createElement("div", { className: "clbs-sub" }, "AGY / CodeBuddy / MiMo 三条 CLI 桥接的派发偏好。保存后对各自的 preset、动态插件与 MCP 三种形态即时生效。")),
+        PROVIDERS.map(function (meta) {
+          return react.createElement(ProviderSettingsCard, { key: meta.id, meta: meta, view: view.providers && view.providers[meta.id], form: form[meta.id] || {}, setField: setField, clears: clears, setClear: setClear });
+        }),
+        react.createElement("div", { className: "clbs-actions" },
+          react.createElement("button", { className: "clbs-btn", type: "button", onClick: save, disabled: loading }, loading ? "保存中…" : "保存全部"),
+          react.createElement("button", { className: "clbs-btn clbs-btn-ghost", type: "button", onClick: function () { setClears({}); reload(); } }, "重载"),
+          msg ? react.createElement("span", { className: "clbs-msg " + (msg.kind === "ok" ? "clbs-msg-ok" : "clbs-msg-err") }, msg.text) : null));
+    }
+
+    function apply(ctx) {
+      if (typeof ctx.inject !== "function") return;
+      ctx.inject(["slots"], function (scope) {
+        const slots = scope.get("slots");
+        if (slots === undefined) return;
+        scope.slots.inject("conversation.session.header.utilities", function () {
+          return slots.register({ name: "conversation.session.header.utilities", id: "cli-bridge-indicator-home", order: 50, inject: function (injectedSessionId) { return { injectedSessionId: injectedSessionId, sessionsSvc: scope.get("sessions") }; } }, function (props) { return react.createElement(Indicator, props); });
+        });
+        scope.slots.inject("settings.section", function () {
+          return slots.register({ name: "settings.section", id: "cli-bridge-settings", order: 7, label: function () {
+            try { return (String(navigator.language || "").toLowerCase().indexOf("zh") === 0) ? "CLI Bridge 桥接" : "CLI Bridge"; }
+            catch (e) { return "CLI Bridge"; }
+          } }, function () { return react.createElement(SettingsPanel, null); });
+        });
+      });
+    }
+
+    exports.apply = apply;
+    exports.inject = ["slots"];
+    return module.exports;
+  }
+});
