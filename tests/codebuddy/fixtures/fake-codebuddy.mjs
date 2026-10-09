@@ -15,7 +15,7 @@ const modelArgIdx = process.argv.indexOf('--model')
 const usedModel = modelArgIdx >= 0 ? process.argv[modelArgIdx + 1] : null
 const subtype = process.env.FAKE_CB_SUBTYPE || 'success'
 if (process.env.FAKE_CB_COUNT_FILE) {
-  try { appendFileSync(process.env.FAKE_CB_COUNT_FILE, String(process.pid) + '\n') } catch (e) {}
+  try { appendFileSync(process.env.FAKE_CB_COUNT_FILE, process.pid + ' ' + process.argv.slice(2).join(' ') + '\n') } catch (e) {}
 }
 const lines = [
   JSON.stringify({ type: 'system', subtype: 'init', session_id: 'fake-s1' }),
@@ -25,7 +25,7 @@ const lines = [
     type: 'result',
     subtype: subtype,
     is_error: process.env.FAKE_CB_SUBTYPE ? true : false,
-    result: 'cwd=' + process.cwd() + ' model=' + (usedModel || 'cli-default'),
+    result: 'cwd=' + process.cwd() + ' model=' + (usedModel || 'cli-default') + ' argv=' + process.argv.slice(2).join(' '),
     session_id: 'fake-s1',
     duration_ms: 1234,
     num_turns: 2,
