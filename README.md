@@ -109,6 +109,7 @@ npm run check                 # 三闸门全量
 - [docs/MIGRATION.md](docs/MIGRATION.md) — 从三个旧包迁移对照表
 - [MCP-POLICY.md](MCP-POLICY.md) / [中文版](docs/MCP-POLICY.zh.md) — 给外部 MCP 客户端（Claude Code/Codex）的派发策略卡
 - [docs/RELEASE-SOP.md](docs/RELEASE-SOP.md) — 发版流程与红线检查
+- [docs/FALLBACK-AND-INDICATOR.md](docs/FALLBACK-AND-INDICATOR.md) — 回退弹窗与状态灯语义详解
 - [PROVIDER-CONTRACT.md](PROVIDER-CONTRACT.md) — provider 接入契约（冻结）
 - [CHANGELOG.md](CHANGELOG.md) + [docs/history/](docs/history/) — 统一历史与三家 lineage 全量历史
 
