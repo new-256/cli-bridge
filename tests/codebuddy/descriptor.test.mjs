@@ -2,11 +2,12 @@
 // 全部 fs 触点走运行时 mkdtemp（不引用旧包 fixtures/auth|credentials —— gate 9）。
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import defineProvider from '../../providers/codebuddy.mjs'
 import { summarizeArgs, MAX_ARG_LEN, MAX_TRAIL } from '../../core/bridge-kit.mjs'
+import { freshTmp } from './helpers/env.mjs'
 
 // 造一个受控 env 的 provider（deps 注入面，测试与真机登录态解耦）。
 function mk(extraEnv = {}, extraFs = {}) {
@@ -119,18 +120,13 @@ test('buildArgv clamp 边界：maxTurns 0→1，timeoutSec 5→10 / 99999→3600
 })
 
 test('buildArgv 端点/凭据注入（auth 域 www.codebuddy.cn ≠ product 域 → CODEBUDDY_BASE_URL）', () => {
-  const dir = join(process.cwd(), 'tmp-cb-auth-' + process.pid + '-' + Math.random().toString(36).slice(2, 8))
-  mkdirSync(dir, { recursive: true })
+  const dir = freshTmp('cbtest-auth-')
   writeFileSync(join(dir, 'Tencent-Cloud.coding-copilot.info'), JSON.stringify({ auth: { domain: 'www.codebuddy.cn' } }), 'utf8')
-  try {
-    const p = mk({ CODEBUDDY_AUTH_DIR: dir })
-    const b = p.buildArgv(['cb'], { prompt: 'x' }, { backend: 'codebuddy' })
-    assert.ok(b.env && b.env.CODEBUDDY_BASE_URL === 'https://www.codebuddy.cn/v2', JSON.stringify(b.env))
-    const same = p.buildArgv(['cb'], { prompt: 'x' }, { backend: 'codebuddy', settings: { endpointOverride: 'https://www.codebuddy.ai/v2' } })
-    assert.equal(same.env, null, 'override 指回 product 域 → 不注入')
-  } finally {
-    try { writeFileSync(join(dir, 'Tencent-Cloud.coding-copilot.info'), '', 'utf8'); rmSync(dir, { recursive: true, force: true }) } catch (e) {}
-  }
+  const p = mk({ CODEBUDDY_AUTH_DIR: dir })
+  const b = p.buildArgv(['cb'], { prompt: 'x' }, { backend: 'codebuddy' })
+  assert.ok(b.env && b.env.CODEBUDDY_BASE_URL === 'https://www.codebuddy.cn/v2', JSON.stringify(b.env))
+  const same = p.buildArgv(['cb'], { prompt: 'x' }, { backend: 'codebuddy', settings: { endpointOverride: 'https://www.codebuddy.ai/v2' } })
+  assert.equal(same.env, null, 'override 指回 product 域 → 不注入')
 })
 
 // ── parseJson / buildResult（旧 verbatim）─────────────────────────────────────
@@ -232,21 +228,18 @@ test('preflight：非 EN 放行；EN 无凭据 abort=AUTH_REQUIRED（含 protect
 })
 
 test('resolveEnToken 三通道优先级：setting > CODEBUDDY_AUTH_TOKEN > DSH 凭据库', () => {
-  const home = join(process.cwd(), 'tmp-cb-store-' + process.pid + '-' + Math.random().toString(36).slice(2, 8))
-  mkdirSync(home, { recursive: true })
-  writeFileSync(join(home, '.credentials.yaml'), 'WORKBUDDY_TOKEN: ' + 'Ab3dEf6hIj9kLm0nOp1qRs2tUv3wXy4z5A6b7C8d\nOTHER_KEY: short\n', 'utf8')
-  try {
-    const storeOnly = mk({ CODEBUDDY_CREDENTIALS_DIR: home })
-    assert.deepEqual(storeOnly.resolveEnToken(''), { token: 'Ab3dEf6hIj9kLm0nOp1qRs2tUv3wXy4z5A6b7C8d', source: 'dsh-store' })
-    const withEnvTok = mk({ CODEBUDDY_CREDENTIALS_DIR: home, CODEBUDDY_AUTH_TOKEN: 'env-token-1' })
-    assert.equal(withEnvTok.resolveEnToken('').source, 'env')
-    assert.deepEqual(withEnvTok.resolveEnToken('  setting-tok  '), { token: 'setting-tok', source: 'setting' })
-    // 占位/短值被拒（≥40 且非 $ 引用）
-    const decoy = mk({ CODEBUDDY_CREDENTIALS_DIR: process.cwd() })
-    assert.equal(decoy.readDshWorkbuddyToken(), null)
-  } finally {
-    try { writeFileSync(join(home, '.credentials.yaml'), '', 'utf8'); rmSync(home, { recursive: true, force: true }) } catch (e) {}
-  }
+  const home = freshTmp('cbtest-store-')
+  // 假 token 串（测试自造，非真实凭据 —— gate-9 卫生注记）；单类字符故意不过
+  // 三分类判定，杜绝任何形态被误认成真凭据。
+  writeFileSync(join(home, '.credentials.yaml'), 'WORKBUDDY_TOKEN: ' + 'a'.repeat(42) + '\nOTHER_KEY: short\n', 'utf8')
+  const storeOnly = mk({ CODEBUDDY_CREDENTIALS_DIR: home })
+  assert.deepEqual(storeOnly.resolveEnToken(''), { token: 'a'.repeat(42), source: 'dsh-store' })
+  const withEnvTok = mk({ CODEBUDDY_CREDENTIALS_DIR: home, CODEBUDDY_AUTH_TOKEN: 'env-token-1' })
+  assert.equal(withEnvTok.resolveEnToken('').source, 'env')
+  assert.deepEqual(withEnvTok.resolveEnToken('  setting-tok  '), { token: 'setting-tok', source: 'setting' })
+  // 占位/短值被拒（≥40 且非 $ 引用）
+  const decoy = mk({ CODEBUDDY_CREDENTIALS_DIR: freshTmp('cbtest-empty-') })
+  assert.equal(decoy.readDshWorkbuddyToken(), null)
 })
 
 // ── endpointEnv / mismatch（旧 verbatim 三规则/三分支）────────────────────────
@@ -333,23 +326,18 @@ test('目录纯函数：normalizeProductConfig/extractModelIds/credits 解析 ve
 })
 
 test('backendModelCatalog：CODEBUDDY_MODELS_FILE 注入文件优先、损坏文件回静态表', () => {
-  const dir = join(process.cwd(), 'tmp-cb-models-' + process.pid + '-' + Math.random().toString(36).slice(2, 8))
-  mkdirSync(dir, { recursive: true })
+  const dir = freshTmp('cbtest-models-')
   const good = join(dir, 'product.json')
   writeFileSync(good, JSON.stringify({ models: [{ id: 'zzz-1' }, { id: 'zzz-2' }] }), 'utf8')
-  try {
-    const p = mk({ CODEBUDDY_MODELS_FILE: good })
-    assert.deepEqual(p.backendModelCatalog('codebuddy', {}), ['zzz-1', 'zzz-2'])
-    const broken = mk({ CODEBUDDY_MODELS_FILE: join(dir, 'nope.json') })
-    assert.equal(broken.backendModelCatalog('codebuddy', {}).slice(0, 3).join(','), 'hy4-preview,hy3,hy3-x', '静态表回退')
-    const det = p.modelCatalogDetailed('codebuddy', { accountModels: ['zzz-2', 'nope-9'] })
-    assert.equal(det[0].id, 'zzz-2', '已授权在前')
-    assert.equal(det.find((x) => x.id === 'zzz-1').authorized, false)
-    assert.equal(det.find((x) => x.id === 'zzz-1').label, 'zzz-1 · 未授权')
-    assert.equal(det.find((x) => x.id === 'zzz-2').promotion, null, '促销角标 0.1.0 有意省略')
-  } finally {
-    try { writeFileSync(good, '', 'utf8'); rmSync(dir, { recursive: true, force: true }) } catch (e) {}
-  }
+  const p = mk({ CODEBUDDY_MODELS_FILE: good })
+  assert.deepEqual(p.backendModelCatalog('codebuddy', {}), ['zzz-1', 'zzz-2'])
+  const broken = mk({ CODEBUDDY_MODELS_FILE: join(dir, 'nope.json') })
+  assert.equal(broken.backendModelCatalog('codebuddy', {}).slice(0, 3).join(','), 'hy4-preview,hy3,hy3-x', '静态表回退')
+  const det = p.modelCatalogDetailed('codebuddy', { accountModels: ['zzz-2', 'nope-9'] })
+  assert.equal(det[0].id, 'zzz-2', '已授权在前')
+  assert.equal(det.find((x) => x.id === 'zzz-1').authorized, false)
+  assert.equal(det.find((x) => x.id === 'zzz-1').label, 'zzz-1 · 未授权')
+  assert.equal(det.find((x) => x.id === 'zzz-2').promotion, null, '促销角标 0.1.0 有意省略')
 })
 
 // ── foldStreamEvent（kit 传 helper，provider 不 import 执行细节）──────────────
