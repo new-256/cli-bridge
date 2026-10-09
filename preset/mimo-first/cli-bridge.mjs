@@ -178,12 +178,14 @@ export function apply(ctx, config) {
     execute: (args) => provider.statusToolLogic(args)
   }))
   // mimo_settings：preset 有 nodeFs → 可持久化（描述符工厂恒给出该 extraTool）。
+  // 注意 render 适配：harness 契约是 render(args, value)，extraTools[].render 是
+  // renderSettings(value) 单参 —— 直接透传会把 args 当 value（渲染全空）。
   for (const et of provider.extraTools) {
     ctx.effect(() => ctx.tools.register({
       name: et.name,
       description: et.description,
       parameters: et.inputSchema,
-      output: { schema: OUTPUT_SCHEMA, render: et.render || ((args, value) => renderResult(value, provider)) },
+      output: { schema: OUTPUT_SCHEMA, render: et.render ? ((a, v) => et.render(v)) : ((a, v) => renderResult(v, provider)) },
       execute: (args, exec) => et.logic(args, exec)
     }))
   }

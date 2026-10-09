@@ -108,12 +108,14 @@ return {
       execute: function (args) { return provider.statusToolLogic(args) }
     }))
     // mimo_settings：沙箱无 nodeFs → 描述符内部自动降级为回显（不持久化）。
+    // render 适配：harness 契约是 render(args, value)，extraTools[].render 是
+    // renderSettings(value) 单参 —— 直接透传会把 args 当 value（渲染全空）。
     for (const et of provider.extraTools) {
       harness.registerTool(ctx, harness.defineTool({
         name: et.name,
         description: et.description,
         parameters: et.inputSchema,
-        output: { schema: OUTPUT_SCHEMA, render: function (args, value) { return (et.render || function (a2, v2) { return renderResult(v2, provider) })(args, value) } },
+        output: { schema: OUTPUT_SCHEMA, render: function (args, value) { return et.render ? et.render(value) : renderResult(value, provider) } },
         execute: function (args, exec) { return et.logic(args, exec) }
       }))
     }
