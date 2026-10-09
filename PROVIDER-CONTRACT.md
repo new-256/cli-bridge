@@ -157,6 +157,35 @@ export function check(env) → true | throw                             // --che
 - codebuddy：`core/codebuddy-core.mjs` 中与 provider 无关的骨架**不要**复制（已在 bridge-kit），
   provider 特有部分（BACKENDS/endpoint/auth/model catalog/settings/plan-mode Bash 预批 argv）进 descriptor；
   `dynamic/host.template.mjs` 的占位符改造为双占位符模板。
+## 8. 运行时事实与红线速查（team 必读）
+
+- **client id 红线**：`home-plugin/cli-bridge-indicator/lib/client.js` 的
+  `__ModuleLoader__.load({ id: "@luchenglong/cli-bridge" })` 必须逐字等于包名，
+  由 `scripts/verify.mjs`（prepack 自动跑）机器把关。**任何人任何任务不得改这个 id**，
+  除非同时改包名并走 Lead 评审。改错 = 整个客户端组合加载失败 = DSH 启动致命屏。
+- **红线 1**：任何任务不得重启/杀掉正在运行的 DSH 后端；不得改
+  `%APPDATA%\DSH Desktop\dsh-home\profiles\web\package.json`（本次交付不切运行时）。
+- **红线 3**：不得在本仓库创建 junction/symlink（360 会连带删目标）。
+- preset 形态模块 = 宿主进程内真 ESM：可 `import node:fs` 等内建、可用 `process`；
+  但**不得 import `@deepseek-ai/*`**（本地包解析根够不到 harness 包，历史论证）；
+  模块内相对 import（如 `'../../providers/agy.mjs'`）是标准 ESM 解析，安全可用。
+- dynamic 形态：`dynamic/<id>.host.js` 由 build 内联生成；**模板里禁止任何 import**
+  （沙箱 new Function），宿主能力全部来自沙箱注入的 `harness.*`。
+- MCP 形态：真 Node 进程，可 import node:*；没有 ctx.emit，状态只能走快照文件
+  （`{DSH_HOME}/cli-bridge-mcp-<id>.json`，bridge-kit `buildMcpBridgePayload` + 原子写）。
+- 家级灯路由（keystone 已实现，别重复注册）：`GET /cli-bridge/status`、
+  `GET/POST /cli-bridge/settings`、三个旧路径 `/agy-indicator/status` 等保持兼容、
+  `GET /agy-indicator/quota`（脚本定位 = env `CLI_BRIDGE_AGY_QUOTA` > 本包 bin）。
+- 事件契约（provider 只管发，keystone 听）：`<id>/status` payload
+  `{ snapshot: <engine.statusSnapshot() 输出> }`；`<id>/mode` payload
+  `{ active: true, sessionId }`（每 30s 心跳续租，TTL 75s）。
+- 旧包工具入参语义保持逐字不变（老提示词/会话仍在用）：移植时以旧仓测试为准，
+  不许「顺手改 schema」。
+
+## 9. 移植基线补充
+
 - mimo：`core/mimo-core.mjs` + `core/runtime-settings.mjs` 的纯逻辑进 descriptor/mcp 模块；
-  桌面 HTTP 路径（desktopFetch/desktopSendTurn 等）放进描述符（可 import node: 的形态仅限 mcp/*），
-  preset/dynamic 形态的 fetch 用全局 fetch（沙箱可用）。
+  桌面 HTTP 路径（desktopFetch/desktopSendTurn 等）：preset/MCP 形态可用全局 fetch 与
+  node: 模块，dynamic 沙箱形态若拿不到 fetch 则 preflight 报 `DESKTOP_UNREACHABLE`
+  并提示改用 mimocode 后端（保持旧包语义）。
+

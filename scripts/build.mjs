@@ -25,6 +25,9 @@ const ids = ['agy', 'codebuddy', 'mimo']
 const PKG = '@luchenglong/cli-bridge'
 
 const MODE = process.argv.includes('--check') ? 'check' : 'write'
+// --only=<id> 让单个 provider 的作者只生成/校验自己的派生物，避免并发写他人产物。
+const onlyArg = process.argv.find((a) => a.startsWith('--only='))
+const ONLY = onlyArg ? onlyArg.slice('--only='.length) : null
 const drift = []
 
 function read(rel) { return readFileSync(join(ROOT, rel), 'utf8') }
@@ -42,21 +45,29 @@ function emit(rel, content) {
 }
 
 // ── 1. dynamic host（文本内联，沙箱禁 import）──────────────────────────────────
-function stripModuleSyntax(src) {
-  return src
+function stripModuleSyntax(src, label) {
+  const out = src
     .split('\n')
     .filter((l) => !/^\s*import\s[^(]*from\s*['"][^'"]+['"];?\s*$/.test(l) && !/^\s*import\s*['"]/.test(l))
     .join('\n')
     .replace(/^export\s+(const|let|var|function|async function|class)\s/gm, '$1 ')
+    .replace(/^export\s+default\s+(async\s+)?function\s+([A-Za-z0-9_$]+)\s*/gm, '$1function $2 ')
+    .replace(/^export\s+default\s+(async\s+)?function\s*\(/gm, '$1function __default__(')
     .replace(/^export\s*\{[^}]*\};?\s*$/gm, '')
+  // 内联目标是「脚本体」：残留的 export default/import 说明源用了本转换器不支持
+  // 的形态。静默产出坏代码会让 dynamic host 在沙箱里炸得莫名其妙，必须大声失败。
+  if (/^\s*(export\s+default|import\s|import\()/m.test(out)) {
+    throw new Error('build: ' + (label || 'source') + ' 用了沙箱内联不支持的模块形态（provider 需具名 `export default function defineProvider(...)`；bridge-kit 不得 import）')
+  }
+  return out
 }
 
 function buildDynamicHost(id) {
   const tplRel = 'dynamic/' + id + '.host.template.mjs'
   if (!existsSync(join(ROOT, tplRel))) return null
   const tpl = read(tplRel)
-  const kit = stripModuleSyntax(read('core/bridge-kit.mjs'))
-  const prov = stripModuleSyntax(read('providers/' + id + '.mjs'))
+  const kit = stripModuleSyntax(read('core/bridge-kit.mjs'), 'core/bridge-kit.mjs')
+  const prov = stripModuleSyntax(read('providers/' + id + '.mjs'), 'providers/' + id + '.mjs')
   if (!tpl.includes('/*__KIT__*/') || !tpl.includes('/*__PROVIDER__*/')) {
     throw new Error(tplRel + ' missing /*__KIT__*/ or /*__PROVIDER__*/ placeholder')
   }
@@ -64,6 +75,7 @@ function buildDynamicHost(id) {
 }
 
 for (const id of ids) {
+  if (ONLY && id !== ONLY) continue
   const out = buildDynamicHost(id)
   if (out) emit('dynamic/' + id + '.host.js', out)
 }
@@ -77,43 +89,79 @@ function yamlString(v) {
   return s
 }
 
-function yamlBlockScalar(s, indent) {
-  const lines = String(s).split('\n')
-  return '|\n' + lines.map((l) => indent + l).join('\n')
-}
-
 function yamlEntry(entry, indent) {
-  // 递归序列化一个插件条目（id/name/config/disabled/plugins/isolate...）。
+  // 递归序列化一个插件条目。字段序与官方 patch.yml 习惯一致：
+  // id → name → entry → group → isolate → disabled/if → config。
   const pad = ' '.repeat(indent)
   const lines = [pad + '- id: ' + yamlString(entry.id)]
-  if (entry.name) lines.push(pad + '  name: ' + yamlString(entry.name))
-  if (entry.entry) lines.push(pad + '  entry: ' + yamlString(entry.entry))
-  if (entry.if !== undefined) lines.push(pad + '  if: ' + yamlString(entry.if))
-  const rest = Object.keys(entry).filter((k) => ['id', 'name', 'entry', 'if', 'config', 'plugins'].indexOf(k) < 0)
-  for (const k of rest) {
-    const v = entry[k]
-    if (v && typeof v === 'object' && typeof v.__jsExpr === 'string') lines.push(pad + '  ' + k + ': !!js |-\n' + pad + '  ' + v.__jsExpr)
-    else if (typeof v === 'boolean' || typeof v === 'number') lines.push(pad + '  ' + k + ': ' + String(v))
-    else if (typeof v === 'string') lines.push(pad + '  ' + k + ': ' + yamlString(v))
+  if (entry.name !== undefined) lines.push(pad + '  name: ' + yamlString(entry.name))
+  if (entry.entry !== undefined) lines.push(pad + '  entry: ' + yamlString(entry.entry))
+  if (entry.group === true) lines.push(pad + '  group: true')
+  if (entry.isolate && typeof entry.isolate === 'object') {
+    lines.push(pad + '  isolate:')
+    for (const k of Object.keys(entry.isolate)) lines.push(pad + '    ' + k + ': ' + String(entry.isolate[k]))
   }
-  if (entry.config) lines.push(yamlConfig(entry.config, pad + '  '))
-  if (Array.isArray(entry.plugins)) {
-    lines.push(pad + '  plugins: ' + (entry.plugins.length ? '' : '[]'))
-    for (const child of entry.plugins) lines.push(yamlEntry(child, indent + 4))
+  for (const k of ['disabled', 'if']) {
+    if (entry[k] === undefined) continue
+    const v = entry[k]
+    if (v && typeof v === 'object' && typeof v.__jsExpr === 'string') lines.push(pad + '  ' + k + ": !!js '" + String(v.__jsExpr).replace(/'/g, "''") + "'")
+    else lines.push(pad + '  ' + k + ': ' + String(v))
+  }
+  if (entry.config !== undefined) {
+    if (Array.isArray(entry.config)) {
+      lines.push(pad + '  config:')
+      if (!entry.config.length) lines[lines.length - 1] = pad + '  config: []'
+      for (const child of entry.config) lines.push(yamlEntry(child, indent + 4))
+    } else if (entry.config && typeof entry.config === 'object') {
+      lines.push(yamlConfig(entry.config, indent + 2))
+    } else {
+      lines.push(pad + '  config: ' + yamlString(entry.config))
+    }
   }
   return lines.join('\n')
 }
 
+function yamlValue(v) {
+  // '' 返回值 = 「值是嵌套结构/多行文本，需换行展开」；否则返回 ' 标量' 后缀。
+  if (v && typeof v === 'object' && typeof v.__jsExpr === 'string') return " !!js '" + String(v.__jsExpr).replace(/'/g, "''") + "'"
+  if (Array.isArray(v)) return v.length ? '' : ' []'
+  if (v && typeof v === 'object') return ''
+  if (typeof v === 'string') { if (v.indexOf('\n') >= 0) return ''; return ' ' + yamlString(v) }
+  return ' ' + String(v)
+}
+
+// 多行字符串 → YAML 块标量（'|' 保留结尾单换行；'|-' 裁掉）。行内引号折叠会改变
+// 文本语义（plan-mode 段含逐字换行），必须用块标量原样落地。
+function yamlBlockKey(key, v, keyPad, valPad) {
+  const clip = v.endsWith('\n') ? '|' : '|-'
+  const body = (clip === '|' ? v.replace(/\n$/, '') : v).split('\n')
+  const lines = [keyPad + key + ': ' + clip]
+  for (const l of body) lines.push(l === '' ? '' : valPad + l)
+  return lines
+}
+
 function yamlConfig(config, indent) {
-  const pad = ' '.repeat(indent.length)
+  // indent：'config:' 键本身的列；子键 +2。
+  const pad = ' '.repeat(indent)
   const lines = [pad + 'config:']
   for (const k of Object.keys(config)) {
     const v = config[k]
-    if (v && typeof v === 'object' && v.__jsExpr) lines.push(pad + '  ' + k + ': !!js ' + String(v.__jsExpr))
-    else if (Array.isArray(v)) lines.push(pad + '  ' + k + ': ' + JSON.stringify(v))
-    else if (typeof v === 'boolean' || typeof v === 'number') lines.push(pad + '  ' + k + ': ' + String(v))
-    else if (v && typeof v === 'object') { lines.push(pad + '  ' + k + ':'); lines.push(yamlInlineObject(v, indent + 2)) }
-    else lines.push(pad + '  ' + k + ': ' + yamlString(v))
+    const inline = yamlValue(v)
+    if (inline !== '') { lines.push(pad + '  ' + k + ':' + inline); continue }
+    if (typeof v === 'string') { lines.push(...yamlBlockKey(k, v, pad + '  ', pad + '    ')); continue }
+    if (Array.isArray(v)) {
+      lines.push(pad + '  ' + k + ':')
+      for (const item of v) {
+        if (item && typeof item === 'object' && !item.__jsExpr) {
+          const keys = Object.keys(item)
+          lines.push(pad + '    - ' + keys[0] + ': ' + yamlString(item[keys[0]]))
+          for (let i = 1; i < keys.length; i++) lines.push(pad + '      ' + keys[i] + ': ' + yamlString(item[keys[i]]))
+        } else lines.push(pad + '    - ' + yamlString(item))
+      }
+    } else {
+      lines.push(pad + '  ' + k + ':')
+      lines.push(yamlInlineObject(v, indent + 4))
+    }
   }
   return lines.join('\n')
 }
@@ -123,16 +171,22 @@ function yamlInlineObject(obj, indent) {
   const lines = []
   for (const k of Object.keys(obj)) {
     const v = obj[k]
-    if (v && typeof v === 'object' && v.__jsExpr) lines.push(pad + k + ': !!js ' + String(v.__jsExpr))
-    else if (v && typeof v === 'object') { lines.push(pad + k + ':'); lines.push(yamlInlineObject(v, indent + 2)) }
-    else if (typeof v === 'string') lines.push(pad + k + ': ' + yamlString(v))
-    else lines.push(pad + k + ': ' + String(v))
+    const inline = yamlValue(v)
+    if (inline !== '') lines.push(pad + k + ':' + inline)
+    else if (typeof v === 'string') lines.push(...yamlBlockKey(k, v, pad, pad + '  '))
+    else {
+      lines.push(pad + k + ':')
+      if (Array.isArray(v)) { for (const item of v) lines.push(pad + '  - ' + yamlString(item)) }
+      else lines.push(yamlInlineObject(v, indent + 2))
+    }
   }
   return lines.join('\n')
 }
 
+const PRESET_DIRS = { agy: 'agy-first', codebuddy: 'codebuddy-first', mimo: 'mimo-first' }
+
 async function loadPluginList(id) {
-  const rel = 'preset/' + id + '/plugin-list.mjs'
+  const rel = 'preset/' + PRESET_DIRS[id] + '/plugin-list.mjs'
   const abs = join(ROOT, rel)
   if (!existsSync(abs)) return null
   const mod = await import(pathToFileURL(abs).href)
@@ -140,19 +194,21 @@ async function loadPluginList(id) {
 }
 
 for (const id of ids) {
+  if (ONLY && id !== ONLY) continue
   const mod = await loadPluginList(id)
   if (!mod || typeof mod.buildPlugins !== 'function') continue
+  const dir = PRESET_DIRS[id]
   const meta = mod.meta || {}
   const plugins = mod.buildPlugins({ bridgeName: PKG + '/preset-' + id })
   const head = [
-    '// 生成物 — 由 node scripts/build.mjs 从 preset/' + id + '/plugin-list.mjs 生成，勿手改。',
-    '// legacy 目录形态（$DSH_HOME/.agent-presets/' + meta.id + '/）；新 DSH 走声明制',
-    '// （home-plugin/cli-bridge-indicator/lib/preset-declarations.mjs 直接 import 同一源）。',
+    '# 生成物 — 由 node scripts/build.mjs 从 preset/' + dir + '/plugin-list.mjs 生成，勿手改。',
+    '# legacy 目录形态（$DSH_HOME/.agent-presets/' + meta.id + '/）；新 DSH 走声明制',
+    '# （home-plugin/cli-bridge-indicator/lib/preset-declarations.mjs 直接 import 同一源）。',
     ''
   ].join('\n')
   const body = plugins.map((e) => yamlEntry(e, 0)).join('\n')
-  emit('preset/' + id + '/agent.cordis.yml', head + body + '\n')
-  emit('preset/' + id + '/preset.yml', [
+  emit('preset/' + dir + '/agent.cordis.yml', head + body + '\n')
+  emit('preset/' + dir + '/preset.yml', [
     'name: ' + yamlString(meta.name || meta.id),
     'description: ' + yamlString(meta.description || ''),
     'order: ' + String(meta.order != null ? meta.order : 10),

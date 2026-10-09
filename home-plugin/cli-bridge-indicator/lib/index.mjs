@@ -361,8 +361,17 @@ export function apply(ctx) {
 
 let quotaCache = { at: 0, data: null }
 function agyQuota(res) {
-  const script = process.env.CLI_BRIDGE_AGY_QUOTA || join(detectDshHome(), '..', '..', 'Desktop', 'DSH插件开发', 'CLI Bridge', 'bin', 'agy-quota.mjs')
-  if (!existsSync(script)) { jsonRes(res, 200, { ok: false, error: 'quota script not found' }); return }
+  // 额度脚本定位：CLI_BRIDGE_AGY_QUOTA 显式覆盖 > 本包内 bin/agy-quota.mjs（由模块
+  // 真实路径推导）。绝不硬编码用户桌面路径（历史教训：agy 旧版把
+  // C:\Users\lcl\Desktop\agy-first-bridge 写死，换机即坏）。
+  let script = process.env.CLI_BRIDGE_AGY_QUOTA || null
+  if (!script) {
+    try {
+      const here = dirname(fileURLToPath(import.meta.url))
+      script = join(here, '..', '..', '..', 'bin', 'agy-quota.mjs')
+    } catch (e) { }
+  }
+  if (!script || !existsSync(script)) { jsonRes(res, 200, { ok: false, error: 'quota script not found' }); return }
   const now = Date.now()
   if (quotaCache.data && now - quotaCache.at < 5 * 60 * 1000) { jsonRes(res, 200, quotaCache.data); return }
   import('node:child_process').then(({ execFile }) => {
