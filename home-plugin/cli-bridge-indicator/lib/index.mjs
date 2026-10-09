@@ -7,7 +7,8 @@
 //          （同时保留旧服务名 agyCollector/codebuddyCollector/mimoCollector 别名，
 //           让「新灯 + 旧包 dynamic 形态」并存期不丢数据）
 //       3) MCP 子进程：读 {dsh-home}/cli-bridge-mcp-<id>.json（新）+
-//          旧包路径 codebuddy-indicator-mcp.json / plugins/mimo-indicator/mcp-live.json（兼容）
+//          旧包路径 plugins/agy-indicator/mcp-live.json / codebuddy-indicator-mcp.json /
+//          plugins/mimo-indicator/mcp-live.json（兼容）
 //   • 单一状态路由 GET /cli-bridge/status 返回
 //     { updatedAt, providers: { agy:{...}, codebuddy:{...}, mimo:{...} } }；
 //     同时保留三个旧路由（各返回自己的桶），浏览器旧 client / 其它工具不断流。
@@ -234,6 +235,41 @@ function readBody(req, limit) {
   })
 }
 
+// ── MCP 快照读盘工厂（可脱离 Cordis/真实 fs 单测；apply() 只注入 home）──────────
+// opts: { home, joinFn?, fs? } → readMcpFile(id) → payload|null
+// 新文件名 cli-bridge-mcp-<id>.json 优先；旧包名兼容（并存期旧 MCP/dynamic 形态仍写老路径）：
+//   agy      <home>/plugins/agy-indicator/mcp-live.json（旧包 1.5.13 引入、1.6.2 修
+//            DSH_HOME 锚定；AGY_MCP_LIVE_FILE 只是旧 server 写侧覆盖，读侧无需跟随）
+//   codebuddy <home>/codebuddy-indicator-mcp.json
+//   mimo     <home>/plugins/mimo-indicator/mcp-live.json
+export const LEGACY_MCP_FILES = {
+  agy: ['plugins', 'agy-indicator', 'mcp-live.json'],
+  codebuddy: ['codebuddy-indicator-mcp.json'],
+  mimo: ['plugins', 'mimo-indicator', 'mcp-live.json']
+}
+export function createMcpFileReader(opts) {
+  const o = opts || {}
+  const home = o.home
+  const joinFn = typeof o.joinFn === 'function' ? o.joinFn : join
+  const fsImpl = o.fs || { existsSync, readFileSync }
+  if (!home) return () => null
+  return function readMcpFile(id) {
+    const legacy = LEGACY_MCP_FILES[id]
+    const candidates = [joinFn(home, 'cli-bridge-mcp-' + id + '.json')]
+      .concat(legacy ? [joinFn(home, ...legacy)] : [])
+    for (const p of candidates) {
+      try {
+        if (!fsImpl.existsSync(p)) continue
+        const data = JSON.parse(fsImpl.readFileSync(p, 'utf8'))
+        // 兼容 mimo/agy 旧格式 {writtenAt, projects}
+        if (data && Number(data.writtenAt) && !data.updatedAt) { data.updatedAt = data.writtenAt }
+        return data
+      } catch (e) { }
+    }
+    return null
+  }
+}
+
 export function apply(ctx) {
   const home = detectDshHome()
   // 构造三个描述符只为拿元信息（isSuccessStatus/backends 等纯逻辑）；失败不致命。
@@ -262,24 +298,8 @@ export function apply(ctx) {
   }
 
   // MCP 快照读盘：新文件名优先，旧包文件名兼容（并存期旧包 dynamic/MCP 形态仍在写老路径）。
-  const legacyMcpFiles = {
-    agy: [],
-    codebuddy: [join(home, 'codebuddy-indicator-mcp.json')],
-    mimo: [join(home, 'plugins', 'mimo-indicator', 'mcp-live.json')]
-  }
-  function readMcpFile(id) {
-    const candidates = [join(home, 'cli-bridge-mcp-' + id + '.json')].concat(legacyMcpFiles[id] || [])
-    for (const p of candidates) {
-      try {
-        if (!existsSync(p)) continue
-        const data = JSON.parse(readFileSync(p, 'utf8'))
-        // 兼容 mimo 旧格式 {writtenAt, projects}
-        if (data && Number(data.writtenAt) && !data.updatedAt) { data.updatedAt = data.writtenAt }
-        return data
-      } catch (e) { }
-    }
-    return null
-  }
+  // 表与读盘逻辑见 createMcpFileReader（可注入 fs/join，keystone 测试直接锁三旧路径）。
+  const readMcpFile = createMcpFileReader({ home })
 
   function isSuccessStatus(id, st) {
     const d = descriptors[id]

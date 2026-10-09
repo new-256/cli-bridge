@@ -17,7 +17,7 @@
 | 家级路由 | `/{agy,codebuddy,mimo}-indicator/status` 等 | 保留为兼容别名，新增 `/cli-bridge/status` 聚合 | 兼容 |
 | 设置语义（token 掩码/空=保持/Clear=清除） | codebuddy v1.3+ | 统一面板逐字段保留 | 兼容 |
 | 旧设置文件 | `codebuddy-bridge-settings.json`、`{APPDATA}/mimo-first-bridge/settings.json` | 自动一次性迁移（新分区没写过该字段才回退旧值；写新不写旧） | 无损 |
-| MCP 快照文件 | `{DSH_HOME}/codebuddy-indicator-mcp.json`、`plugins/mimo-indicator/mcp-live.json` | 新名 `cli-bridge-mcp-<id>.json`；旧名仍被家级灯兼容读取 | 无损 |
+| MCP 快照文件 | `{DSH_HOME}/plugins/agy-indicator/mcp-live.json`、`{DSH_HOME}/codebuddy-indicator-mcp.json`、`{DSH_HOME}/plugins/mimo-indicator/mcp-live.json` | 新名 `cli-bridge-mcp-<id>.json`；三个旧名仍被家级灯兼容读取 | 无损 |
 
 ## 需要动手的三处
 
