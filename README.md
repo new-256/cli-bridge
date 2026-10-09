@@ -107,6 +107,7 @@ npm run check                 # 三闸门全量
 - [docs/INSTALL.md](docs/INSTALL.md) — 安装与接线（含旧包迁移）
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 三形态共享内核设计、状态机与红线论证
 - [docs/MIGRATION.md](docs/MIGRATION.md) — 从三个旧包迁移对照表
+- [MCP-POLICY.md](MCP-POLICY.md) / [中文版](docs/MCP-POLICY.zh.md) — 给外部 MCP 客户端（Claude Code/Codex）的派发策略卡
 - [docs/RELEASE-SOP.md](docs/RELEASE-SOP.md) — 发版流程与红线检查
 - [PROVIDER-CONTRACT.md](PROVIDER-CONTRACT.md) — provider 接入契约（冻结）
 - [CHANGELOG.md](CHANGELOG.md) + [docs/history/](docs/history/) — 统一历史与三家 lineage 全量历史
