@@ -40,9 +40,33 @@ test('POST semantics: empty keeps, Clear erases, junk dropped', () => {
   const parse = parseSettingsBody('{"mimo":{"nonexistent":"x"},"codebuddy":{}}', io)
   assert.equal(parse.ok, true)
   assert.ok(parse.value.mimo && !('nonexistent' in parse.value.mimo), 'unknown fields dropped')
-  assert.ok(!('codebuddyEnToken' in (parse.value.codebuddy || {})), 'secret not resurrected by an empty partition')
+  // 空分区绝不【引入】secret 值：真实 descriptor 声明了 codebuddyEnToken（默认 ''），
+  // 「保持现值」语义会把键原样带进 next（值必须为空/缺失，二者对下游 maskToken 等价）。
+  assert.ok(!parse.value.codebuddy || !parse.value.codebuddy.codebuddyEnToken, 'empty partition must not carry a non-empty secret')
   assert.equal(parseSettingsBody('not json', io).ok, false)
   assert.equal(parseSettingsBody('[]', io).ok, false)
+})
+
+test('POST semantics: set → keep-on-empty → clear-on-ExplicitClear (full secret lifecycle)', () => {
+  const { dir, unified } = freshIo()
+  try {
+    const io = { env: { DSH_HOME: dir }, path: unified }
+    // 1) 显式写入 token
+    const p1 = parseSettingsBody('{"codebuddy":{"codebuddyEnToken":"tok-abc-7890"}}', io)
+    assert.equal(p1.ok, true)
+    writeSettingsFile(p1.value, io)
+    // 2) 空分区 POST → 保持现值（绝不(blank)掉）
+    const p2 = parseSettingsBody('{"codebuddy":{"preferredBackend":"workbuddy"}}', io)
+    assert.equal(p2.value.codebuddy.codebuddyEnToken, 'tok-abc-7890', 'empty secret field keeps current value')
+    assert.equal(p2.value.codebuddy.preferredBackend, 'workbuddy')
+    writeSettingsFile(p2.value, io)
+    // 3) Clear → 清除且落盘后不回退
+    const p3 = parseSettingsBody('{"codebuddy":{"codebuddyEnTokenClear":true}}', io)
+    assert.equal(p3.value.codebuddy.codebuddyEnToken, '', 'explicit clear blanks the secret')
+    writeSettingsFile(p3.value, io)
+    const v = settingsView(io)
+    assert.equal(v.providers.codebuddy.secrets.codebuddyEnToken.set, false, 'view shows cleared')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
 test('legacy migration: codebuddy flat file feeds unset fields', { skip: cbKeys.includes('preferredBackend') ? false : 'provider stub has no keys' }, () => {
