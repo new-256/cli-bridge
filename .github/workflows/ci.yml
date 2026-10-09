@@ -1,0 +1,50 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  full:
+    name: build + verify + test + mcp (${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['18', '20', '22']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # 零依赖工程：npm install 只装（不存在的）devDependencies；跑得起即可。
+      - name: Generate derived artifacts
+        run: node scripts/build.mjs
+
+      - name: Red-line verification (client id === package name, exports, descriptors)
+        run: node scripts/verify.mjs
+
+      - name: Build sync check (derived artifacts committed & up to date)
+        run: node scripts/build.mjs --check
+
+      - name: Syntax-check generated dynamic hosts
+        run: |
+          set -e
+          for f in dynamic/*.host.js; do node --check "$f"; echo "ok: $f"; done
+
+      - name: Unit tests
+        run: node --test
+
+      - name: Unified MCP server self-check
+        run: node mcp/cli-bridge-mcp.mjs --check
+
+      - name: Per-provider MCP entry points self-check
+        run: |
+          node mcp/agy-mcp-server.mjs --check
+          node mcp/codebuddy-mcp-server.mjs --check
+          node mcp/mimo-mcp-server.mjs --check
