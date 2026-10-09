@@ -55,8 +55,10 @@
     "docs/",
     "assets/",
     "locale/",
+    "CHANGELOG.md",
+    "PROVIDER-CONTRACT.md",
     "README.md",
-    "README.zh.md",
+    "README.en.md",
     "LICENSE"
   ],
   "keywords": [

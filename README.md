@@ -12,6 +12,8 @@
 > `mimo-first-bridge`（1.2.9 终版）。旧包已 deprecated，功能全部并入此处；迁移见
 > [docs/MIGRATION.md](docs/MIGRATION.md)。
 
+![聚合状态灯的几种状态](assets/indicator-states.svg)
+
 ---
 
 ## 这是什么
