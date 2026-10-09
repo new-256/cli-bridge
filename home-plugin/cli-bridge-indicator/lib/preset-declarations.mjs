@@ -45,7 +45,7 @@ function realize(v, seen) {
 }
 
 async function loadPluginList(id) {
-  const abs = join(ROOT, 'preset', id, 'plugin-list.mjs')
+  const abs = join(ROOT, 'preset', PRESET_DIRS[id] || id, 'plugin-list.mjs')
   if (!existsSync(abs)) return null
   const mod = await import(pathToFileURL(abs).href)
   if (!mod || typeof mod.buildPlugins !== 'function' || !mod.meta) return null
