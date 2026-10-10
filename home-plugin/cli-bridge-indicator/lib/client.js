@@ -327,6 +327,7 @@ window.__ModuleLoader__.load({
     function DispatchCard(props) {
       const ord = props.ord, enabled = props.enabled, labels = props.labels;
       const toggle = props.onToggle, move = props.onMove;
+      const supported = props.supported !== false;
       const anyEnabled = enabled.length > 0;
       const zh = (function () { try { return String(navigator.language || "").toLowerCase().indexOf("zh") === 0; } catch (e) { return false; } })();
       const rankOf = {};
@@ -338,18 +339,22 @@ window.__ModuleLoader__.load({
         react.createElement("div", { className: "clbs-sub", style: { margin: "-4px 0 8px" } },
           zh ? "勾选要启用的 CLI（决定调用面数量），↑↓ 排定智能体的调用优先级（首位最高）。保存后 preset / 动态 / MCP 三形态生效（MCP 需重启子进程）。"
              : "Check which CLIs to enable, use ↑↓ to set call priority (top = highest)."),
+        supported ? null
+          : react.createElement("div", { className: "clbs-msg clbs-msg-err", style: { marginBottom: "8px" } },
+              zh ? "当前运行的宿主尚不支持调度（本面板为新版本）：请重启 DSH 后重新打开设置再修改启用/优先级。"
+                 : "The running host does not support scheduling yet; restart DSH before changing this card."),
         ord.map(function (id, idx) {
           const on = enabled.indexOf(id) >= 0;
           return react.createElement("div", { key: id, className: "clbs-disp-row" + (on ? "" : " clbs-disp-off") },
             react.createElement("label", { className: "clbs-check" },
-              react.createElement("input", { type: "checkbox", checked: on, onChange: function () { toggle(id); } })),
+              react.createElement("input", { type: "checkbox", checked: on, disabled: !supported, onChange: function () { toggle(id); } })),
             react.createElement("span", null,
               on ? react.createElement("span", { className: "clbs-disp-ord" }, String(rankOf[id])) : react.createElement("span", { className: "clbs-disp-ord", style: { background: "transparent", color: "var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary))", border: "1px dashed var(--dsw-alias-border-l1)" }, title: zh ? "未启用" : "disabled" }, "—"),
               react.createElement("span", { className: "clbs-disp-name", style: { marginLeft: "8px" } }, (labels && labels[id]) || id)),
             react.createElement("span", null),
             react.createElement("span", { style: { display: "inline-flex", gap: "4px" } },
-              react.createElement("button", { className: "clbs-disp-btn", type: "button", disabled: idx === 0, onClick: function () { move(idx, -1); }, title: zh ? "上移（提高优先级）" : "up" }, "\u2191"),
-              react.createElement("button", { className: "clbs-disp-btn", type: "button", disabled: idx === ord.length - 1, onClick: function () { move(idx, 1); }, title: zh ? "下移（降低优先级）" : "down" }, "\u2193")));
+              react.createElement("button", { className: "clbs-disp-btn", type: "button", disabled: idx === 0 || !supported, onClick: function () { move(idx, -1); }, title: zh ? "上移（提高优先级）" : "up" }, "\u2191"),
+              react.createElement("button", { className: "clbs-disp-btn", type: "button", disabled: idx === ord.length - 1 || !supported, onClick: function () { move(idx, 1); }, title: zh ? "下移（降低优先级）" : "down" }, "\u2193")));
         }),
         !anyEnabled ? react.createElement("div", { className: "clbs-msg clbs-msg-err", style: { marginTop: "8px" } },
           zh ? "⚠ 全部禁用：三形态都不会注册任何 CLI 工具。" : "All disabled: no CLI tools will be registered.") : null);
@@ -452,14 +457,19 @@ window.__ModuleLoader__.load({
           body[meta.id] = part;
         }
         // 调度区：enabled = 启用集合，priority = ord 全量顺序（后端 order 派生 ∩ enabled）。
-        body._scheduling = { enabled: disp.enabled.slice(), priority: disp.ord.slice() };
+        // 旧宿主（无 scheduling 视图）会静默丢弃 _scheduling —— 运行中面板与新 client 存在
+        // 过渡窗口，此时跳过调度字段并在保存后明确提示，避免「假成功」。
+        const schedSupported = !!(view && view.scheduling);
+        if (schedSupported) body._scheduling = { enabled: disp.enabled.slice(), priority: disp.ord.slice() };
         fetch("/cli-bridge/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
           .then(function (r) { return r.json().then(function (j) { return { code: r.status, j: j }; }); })
           .then(function (res) {
             setLoading(false);
             if (res.code === 200 && res.j && res.j.ok) {
               setClears({}); if (res.j.settings) adopt(res.j.settings);
-              setMsg({ kind: "ok", text: "已保存 ✓ 调度 / 偏好即时生效（preset、动态形态下次会话装配即读；MCP 子进程需重启才刷新工具面）" });
+              setMsg({ kind: schedSupported ? "ok" : "err", text: schedSupported
+                ? "已保存 ✓ 调度 / 偏好即时生效（preset、动态形态下次会话装配即读；MCP 子进程需重启才刷新工具面）"
+                : "已保存（provider 偏好）；宿主不支持调度字段，重启 DSH 后在面板重新保存启用/优先级。" });
             } else setMsg({ kind: "err", text: "保存失败：" + ((res.j && res.j.error) || ("HTTP " + res.code)) });
           })
           .catch(function (e) { setLoading(false); setMsg({ kind: "err", text: "保存失败：" + e.message }); });
@@ -474,7 +484,7 @@ window.__ModuleLoader__.load({
         react.createElement("div", null,
           react.createElement("div", { className: "clbs-h" }, "CLI Bridge"),
           react.createElement("div", { className: "clbs-sub" }, "AGY / CodeBuddy / MiMo 三条 CLI 桥接的派发偏好。保存后对各自的 preset、动态插件与 MCP 三种形态即时生效。")),
-        react.createElement(DispatchCard, { ord: disp.ord, enabled: disp.enabled, labels: dispLabels, onToggle: dispToggle, onMove: dispMove }),
+        react.createElement(DispatchCard, { ord: disp.ord, enabled: disp.enabled, labels: dispLabels, onToggle: dispToggle, onMove: dispMove, supported: !!(view && view.scheduling) }),
         // 卡片顺序跟随调度优先级；未启用的仍渲染（用户要能不改开关也修好它的 token/预选）。
         (function () {
           const byId = {};

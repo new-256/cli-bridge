@@ -39,6 +39,18 @@ test('调度卡两端契约：提交 _scheduling，消费 view.scheduling（enab
   assert.match(SRC, /view\.scheduling\.labels/, 'dispatch card labels come from backend view (not hardcoded)')
 })
 
+test('过渡窗口护栏：宿主无 scheduling 视图时卡片禁用且不提交 _scheduling', () => {
+  // 新 client.js 会先于宿主热加载到浏览器；旧宿主静默丢 _scheduling → 必须禁用交互 +
+  // 跳过提交 + 红字提示，绝不「假成功」。
+  assert.match(SRC, /const schedSupported = !!\(view && view\.scheduling\)/, 'save() probes host capability')
+  assert.match(SRC, /if \(schedSupported\) body\._scheduling =/, 'POST omits _scheduling for old host')
+  assert.match(SRC, /supported: !!\(view && view\.scheduling\)/, 'DispatchCard receives capability flag')
+  assert.match(SRC, /props\.supported !== false/, 'card defaults to supported when prop absent')
+  assert.match(SRC, /disabled: !supported/, 'checkbox disabled without host support')
+  assert.match(SRC, /idx === 0 \|\| !supported/, 'move up disabled without host support')
+  assert.match(SRC, /kind: schedSupported \? "ok" : "err"/, 'save message honest about host support')
+})
+
 test('红线 4：load id 逐字不动（scoped 包名）', () => {
   assert.ok(SRC.includes('window.__ModuleLoader__.load({'), 'loader call shape intact')
   assert.ok(SRC.includes('id: "@luchenglong/cli-bridge"'), 'load id byte-identical')

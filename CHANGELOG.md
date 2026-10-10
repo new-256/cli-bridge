@@ -35,6 +35,8 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
   `SCHED_ALL_IDS` 常量（沙箱禁 import，拿不到 registry）；旧模板无该占位则不注入（向后兼容）。
 - **UI**：设置面板顶部「调度 · 启用与优先级」卡 —— 每 CLI 一行（勾选 + 序号徽标 + ↑↓）；
   provider 卡片顺序跟随优先级，禁用面仍渲染（不改开关也能修好它的 token/预选）；全禁用时红字警告。
+  过渡窗口护栏：新 client.js 先于宿主热加载时（旧宿主视图无 `scheduling`），卡片自动禁用交互、
+  POST 跳过 `_scheduling`、保存后红字提示「重启 DSH 后重新保存」，绝不假成功。
 - `mcp/cli-bridge-mcp.mjs --check` 报告新增 `scheduling:{source,enabled,order}`，部署后一眼确认生效面。
 
 ### Notes
