@@ -66,6 +66,14 @@ window.__ModuleLoader__.load({
       ".clbs-sub{color:var(--dsw-alias-label-secondary);font-size:12px;margin-top:2px}",
       ".clbs-card{border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:12px 14px}",
       ".clbs-card-h{font-weight:600;font-size:13px;margin-bottom:10px}",
+      ".clbs-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:12px;align-items:start}",
+      ".clbs-card-off{opacity:.62}",
+      ".clbs-card-hrow{display:flex;align-items:center;gap:8px;margin-bottom:10px}",
+      ".clbs-card-t{font-weight:600;font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".clbs-chip{display:inline-flex;align-items:center;height:18px;padding:0 8px;border-radius:9px;font-size:11px;font-weight:600;white-space:nowrap}",
+      ".clbs-chip-on{background:rgba(34,197,94,.14);color:var(--dsw-static-green-500,#22c55e)}",
+      ".clbs-chip-off{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary))}",
+      ".clbs-chip-rank{background:var(--dsw-static-blue-500,#3b82f6);color:#fff}",
       ".clbs-grid{display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center}",
       ".clbs-label{color:var(--dsw-alias-label-secondary);text-align:right;font-size:12px}",
       ".clbs-ctl{display:flex;flex-direction:column;gap:4px;min-width:0}",
@@ -257,15 +265,17 @@ window.__ModuleLoader__.load({
         return function () { window.removeEventListener("keydown", h); };
       }, [open]);
       const pills = [];
+      // 陈旧过滤（0.2.1 修复「指示灯长期存在」）：stale 项目（>10min 无活动且未运行）不再
+      // 渲染成常亮灯。历史事故：一次失败后 ✗ AGY 灯永久挂在那 —— 弹窗里仍列 stale 项目作
+      // 历史，但 pill 行只认新鲜活动。
       for (const meta of PROVIDERS) {
         const b = (s && s.providers && s.providers[meta.id]) || null;
         if (!b) continue;
-        const hasProjects = Array.isArray(b.projects) && b.projects.length;
+        const fresh = (Array.isArray(b.projects) ? b.projects : []).filter(function (p) { return !p.stale; });
         const readyShow = iAm[meta.id] === true || (iAm[meta.id] === null && b.presetActive);
-        if (!hasProjects && !readyShow) continue;
-        if (hasProjects) {
-          for (let i = 0; i < b.projects.length; i++) pills.push(react.createElement(Pill, { key: meta.id + ":" + (b.projects[i].cwd || i), p: b.projects[i], label: meta.label, onClick: function () { setOpen(true); } }));
-        } else {
+        if (fresh.length) {
+          for (let i = 0; i < fresh.length; i++) pills.push(react.createElement(Pill, { key: meta.id + ":" + (fresh[i].cwd || i), p: fresh[i], label: meta.label, onClick: function () { setOpen(true); } }));
+        } else if (readyShow) {
           const state = b.state || "idle";
           let text = meta.label + " 就绪";
           if (state === "running") text = meta.label + " 工作中" + (b.running > 1 ? " \u00D7" + b.running : "");
@@ -364,8 +374,14 @@ window.__ModuleLoader__.load({
       const meta = props.meta, view = props.view, form = props.form, setField = props.setField, clears = props.clears, setClear = props.setClear;
       if (!view || !view.present) return null;
       const fields = (view.meta && Array.isArray(view.meta.fields)) ? view.meta.fields : [];
-      return react.createElement("div", { className: "clbs-card" },
-        react.createElement("div", { className: "clbs-card-h" }, meta.label + (view.meta && view.meta.titleSuffix ? " · " + view.meta.titleSuffix : "")),
+      // 卡片头状态条：调度启用/禁用 + 优先级名次（来自调度视图，与调度卡同源，两处永远一致）。
+      const chip = props.on ? react.createElement("span", { className: "clbs-chip clbs-chip-on" }, props.zh ? "启用" : "on")
+        : react.createElement("span", { className: "clbs-chip clbs-chip-off" }, props.zh ? "未启用" : "off");
+      const rank = props.on && props.rank ? react.createElement("span", { className: "clbs-chip clbs-chip-rank", title: props.zh ? "调用优先级" : "call priority" }, "#" + props.rank) : null;
+      return react.createElement("div", { className: "clbs-card" + (props.on ? "" : " clbs-card-off") },
+        react.createElement("div", { className: "clbs-card-hrow" },
+          react.createElement("span", { className: "clbs-card-t" }, meta.label + (view.meta && view.meta.titleSuffix ? " · " + view.meta.titleSuffix : "")),
+          rank, chip),
         fields.length ? react.createElement("div", { className: "clbs-grid" },
           fields.map(function (f) {
             return react.createElement(react.Fragment, { key: f.key },
@@ -375,6 +391,9 @@ window.__ModuleLoader__.load({
                 onChange: function (v) { setField(meta.id, f.key, v); }, onClear: function (b) { setClear(meta.id, f.key, b); }
               }));
           })) : react.createElement("div", { className: "clbs-note" }, "（无可配置项）"),
+        (!props.on) ? react.createElement("div", { className: "clbs-note", style: { marginTop: "8px" } },
+          props.zh ? "此 CLI 已在「调度」卡停用：三形态不会注册它的工具/政策段。下方偏好仍会保存并在重新启用后生效。"
+                   : "Disabled in the dispatch card: no tools/policy will register. Preferences below are still saved.") : null,
         (view.diagnosis) ? react.createElement("div", { className: "clbs-diag" },
           react.createElement("div", { className: "clbs-diag-h" }, "诊断"),
           react.createElement("div", { style: { padding: "7px 10px", fontSize: "12px" } }, view.diagnosis)) : null);
@@ -480,21 +499,31 @@ window.__ModuleLoader__.load({
           react.createElement("div", { className: "clbs-h" }, "CLI Bridge"),
           react.createElement("div", { className: "clbs-sub" }, msg ? msg.text : "加载设置…"));
       }
+      const zh = (function () { try { return String(navigator.language || "").toLowerCase().indexOf("zh") === 0; } catch (e) { return false; } })();
+      // 名次表：启用项在 ord 中的相对次序 = 后端 order（priority ∩ enabled）同源派生。
+      const rankOf = {};
+      (function () { let n = 0; for (const id of disp.ord) { if (disp.enabled.indexOf(id) >= 0) rankOf[id] = (++n); } })();
+      const orderedMeta = (function () {
+        const byId = {};
+        for (const m of PROVIDERS) byId[m.id] = m;
+        const ordered = disp.ord.map(function (id) { return byId[id]; }).filter(Boolean);
+        for (const m of PROVIDERS) if (ordered.indexOf(m) < 0) ordered.push(m);
+        return ordered;
+      })();
       return react.createElement("div", { className: "clbs-root" },
         react.createElement("div", null,
           react.createElement("div", { className: "clbs-h" }, "CLI Bridge"),
           react.createElement("div", { className: "clbs-sub" }, "AGY / CodeBuddy / MiMo 三条 CLI 桥接的派发偏好。保存后对各自的 preset、动态插件与 MCP 三种形态即时生效。")),
-        react.createElement(DispatchCard, { ord: disp.ord, enabled: disp.enabled, labels: dispLabels, onToggle: dispToggle, onMove: dispMove, supported: !!(view && view.scheduling) }),
-        // 卡片顺序跟随调度优先级；未启用的仍渲染（用户要能不改开关也修好它的 token/预选）。
-        (function () {
-          const byId = {};
-          for (const m of PROVIDERS) byId[m.id] = m;
-          const ordered = disp.ord.map(function (id) { return byId[id]; }).filter(Boolean);
-          for (const m of PROVIDERS) if (ordered.indexOf(m) < 0) ordered.push(m);
-          return ordered;
-        })().map(function (meta) {
-          return react.createElement(ProviderSettingsCard, { key: meta.id, meta: meta, view: view.providers && view.providers[meta.id], form: form[meta.id] || {}, setField: setField, clears: clears, setClear: setClear });
-        }),
+        react.createElement("div", null,
+          react.createElement("div", { className: "clbs-card-h" }, zh ? "总设置" : "Global"),
+          react.createElement(DispatchCard, { ord: disp.ord, enabled: disp.enabled, labels: dispLabels, onToggle: dispToggle, onMove: dispMove, supported: !!(view && view.scheduling) })),
+        // 卡片模式：每个 CLI 一张卡（网格排布），卡头带 启用/未启用 + 优先级名次 chip，
+        // 与上方总设置（调度）明确分区。卡片顺序跟随调度优先级。
+        react.createElement("div", { className: "clbs-cards" },
+          orderedMeta.map(function (meta) {
+            const on = disp.enabled.indexOf(meta.id) >= 0;
+            return react.createElement(ProviderSettingsCard, { key: meta.id, meta: meta, on: on, rank: rankOf[meta.id], zh: zh, view: view.providers && view.providers[meta.id], form: form[meta.id] || {}, setField: setField, clears: clears, setClear: setClear });
+          })),
         react.createElement("div", { className: "clbs-actions" },
           react.createElement("button", { className: "clbs-btn", type: "button", onClick: save, disabled: loading }, loading ? "保存中…" : "保存全部"),
           react.createElement("button", { className: "clbs-btn clbs-btn-ghost", type: "button", onClick: function () { setClears({}); reload(); } }, "重载"),

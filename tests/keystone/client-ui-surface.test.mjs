@@ -55,3 +55,20 @@ test('红线 4：load id 逐字不动（scoped 包名）', () => {
   assert.ok(SRC.includes('window.__ModuleLoader__.load({'), 'loader call shape intact')
   assert.ok(SRC.includes('id: "@luchenglong/cli-bridge"'), 'load id byte-identical')
 })
+
+test('0.2.1 指示灯修复：pill 行只渲染新鲜项目（stale 过滤）', () => {
+  // 历史 bug：stale:true 的项目（>10min 无活动）仍被渲染成常亮灯（✗ AGY 永远挂着）。
+  assert.match(SRC, /\.filter\(function \(p\) \{ return !p\.stale; \}\)/, 'pill row filters stale projects')
+  assert.match(SRC, /if \(fresh\.length\)/, 'pills render from fresh list only')
+  assert.match(SRC, /fresh\[i\]\.cwd/, 'Pill iterates fresh entries')
+})
+
+test('0.2.1 卡片模式：总设置/每 CLI 卡分区 + 状态 chip', () => {
+  assert.match(SRC, /clbs-cards/, 'grid container class exists')
+  assert.match(SRC, /zh \? "总设置" : "Global"/, 'global section heading')
+  assert.match(SRC, /clbs-chip clbs-chip-on/, 'enabled chip')
+  assert.match(SRC, /clbs-chip clbs-chip-off/, 'disabled chip')
+  assert.match(SRC, /clbs-chip clbs-chip-rank/, 'priority rank chip')
+  assert.match(SRC, /on: on, rank: rankOf\[meta\.id\]/, 'card receives scheduling-derived flags')
+})
+

@@ -9,7 +9,23 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 > - CodeBuddy 线：[docs/history/codebuddy/CHANGELOG.md](docs/history/codebuddy/CHANGELOG.md)（终版 1.6.2）
 > - MiMo 线：[docs/history/mimo/CHANGELOG.md](docs/history/mimo/CHANGELOG.md)（终版 1.2.9）
 
+## [0.2.1] - 2026-10-10
+
+### Fixed
+- **指示灯长期存在**：超过 `PROJECT_TTL_MS`（10 分钟）无活动的项目（`stale:true`）不再
+  渲染为常亮 pill（弹窗历史列表保留）；服务端半边 —— 顶层聚合 `state/lastStatus/
+  fallbackActive` 只认新鲜项目，全陈旧时回落 `idle`（此前一次失败的 ✗AGY 会永久挂灯，
+  `indicator-state` 新增 3 条红线锁）。
+### Changed
+- **设置面板卡片模式**：「总设置」区（调度卡：启用数量 + 优先级）与每个 CLI 独立成卡、
+  响应式网格排布；CLI 卡头带 启用/未启用 与优先级 `#n` chip（与调度视图同源派生，两处
+  永远一致），未启用卡半透明并明确提示「三形态不注册工具、偏好仍保存」。
+- **单一 id 轴贯通 `scripts/build.mjs` 与 `preset-declarations`**（改从 `providers/registry.mjs`
+  派生 `PROVIDER_IDS`）：新增 provider 只改 registry，调度卡/构建派生物自动跟上
+  （PROVIDER-CONTRACT.md §3.1）。版本锁三处 + provider `mcp.version` 同步 0.2.1。
+
 ## [0.2.0] - 2026-10-10
+
 
 新增「CLI 调度」：让用户选择由智能体调用 CLI 时**启用哪些 CLI（数量）**以及**调用优先级**。
 

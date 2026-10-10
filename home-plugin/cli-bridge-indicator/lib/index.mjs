@@ -180,12 +180,15 @@ export function createIndicatorState(opts) {
     const list = Object.keys(b.projects).map((k) => b.projects[k]).sort((a, x) => (x.updatedAt || 0) - (a.updatedAt || 0))
     let running = 0
     for (const p of list) running += p.running || 0
-    const top = topOf(list)
     const isStale = (p) => {
       if (p.running > 0) return false
       const at = Number(p.updatedAt) || Number(p.lastAt) || 0
       return !!at && (t - at) > projectTtlMs
     }
+    // 顶层聚合只看新鲜（未 stale）项目：陈旧历史不再决定灯色（0.2.1 修复「指示灯长期
+    // 存在」的服务端半边 —— 客户端半边在 pill 过滤；无新鲜项目时顶层回落 idle）。
+    const freshList = list.filter((p) => !isStale(p))
+    const top = topOf(freshList)
     const lastStatus = top ? top.lastStatus : null
     const fallbackActive = top ? !!top.fallbackActive : false
     const state = running > 0 ? 'running' : (lastStatus ? (okStatus(id, lastStatus) ? 'ok' : (fallbackActive ? 'fallback' : 'failed')) : (fallbackActive ? 'fallback' : 'idle'))

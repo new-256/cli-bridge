@@ -108,3 +108,36 @@ test('MRU eviction never evicts running', () => {
   const b = st.bucketSnapshot('agy')
   assert.ok(b.projects.some((p) => p.cwd === 'C:/busy'))
 })
+
+// 0.2.1 修复「指示灯长期存在」服务端半边：陈旧历史项目不参与顶层聚合。
+test('stale projects do not drive aggregate state (falls back to idle)', () => {
+  const { st, tick } = makeState({ projectTtlMs: 1000 })
+  st.mergeSnapshot('agy', { projects: [{ cwd: 'C:/old', lastStatus: 'ERROR', updatedAt: 1000 }] })
+  assert.equal(st.bucketSnapshot('agy').state, 'failed')
+  tick(5000) // 越过 TTL → stale
+  const b = st.bucketSnapshot('agy')
+  assert.equal(b.projects[0].stale, true)
+  assert.equal(b.state, 'idle', 'stale failed history must not keep the light red forever')
+  assert.equal(b.lastStatus, null)
+  assert.equal(b.fallbackActive, false)
+})
+
+test('stale history does not shadow a fresh project', () => {
+  const { st, tick } = makeState({ projectTtlMs: 1000 })
+  st.mergeSnapshot('agy', { projects: [{ cwd: 'C:/old', lastStatus: 'ERROR', updatedAt: 1000 }] })
+  tick(5000)
+  st.mergeSnapshot('agy', { projects: [{ cwd: 'C:/new', lastStatus: 'SUCCESS', updatedAt: 6000 }] })
+  const b = st.bucketSnapshot('agy')
+  assert.equal(b.state, 'ok', 'fresh last top-level wins over stale failed one')
+  assert.equal(b.projects.length, 2, 'stale kept in list (popup history) but not aggregated')
+})
+
+test('running project is never stale and still aggregates', () => {
+  const { st, tick } = makeState({ projectTtlMs: 1000 })
+  st.mergeSnapshot('agy', { projects: [{ cwd: 'C:/run', running: 1, state: 'running', updatedAt: 1000 }] })
+  tick(5000)
+  const b = st.bucketSnapshot('agy')
+  assert.equal(b.projects[0].stale, false)
+  assert.equal(b.state, 'running')
+})
+

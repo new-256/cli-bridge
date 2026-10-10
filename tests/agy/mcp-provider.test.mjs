@@ -27,7 +27,7 @@ function mkIo() {
 }
 
 test('meta 契约形态', () => {
-  assert.deepEqual(meta, { id: 'agy', label: 'AGY', version: '0.2.0' })
+  assert.deepEqual(meta, { id: 'agy', label: 'AGY', version: '0.2.1' })
 })
 
 test('tools(env) 覆盖描述符三件套 + agy_quota，schema 合法，check() 通过', () => {

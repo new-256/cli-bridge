@@ -27,7 +27,7 @@ import {
   fallbackResult, shortLabel, renderStatus
 } from '../../core/bridge-kit.mjs'
 
-export const meta = { id: 'mimo', label: 'MIMO', version: '0.2.0' }
+export const meta = { id: 'mimo', label: 'MIMO', version: '0.2.1' }
 
 const BACKEND_DESKTOP = 'mimo-desktop'
 const SETTINGS_FILE_NAME = 'cli-bridge-settings.json'

@@ -1,6 +1,6 @@
 {
   "name": "@luchenglong/cli-bridge",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "CLI Bridge for DeepSeek Harness (DSH): one package bridging three local coding-CLI agents — agy (Google Antigravity CLI), Tencent CodeBuddy Code, and Xiaomi MiMo (MiMoCode / MiMo Desktop). Each provider keeps its own agent preset (cordis-agy / codebuddy-first / cordis-mimo), tools (agy_run / codebuddy_run / mimo_run + continue + status), rate-limit/network fallback dialog, and zero-dependency MCP server, unified under a single home-level status light, one settings file, and one bundle patch. Merges agy-first-bridge, codebuddy-first-bridge and mimo-first-bridge.",
   "license": "MIT",
   "engines": {

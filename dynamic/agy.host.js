@@ -903,7 +903,7 @@ function defineProvider (deps = {}) {
       diagnose: () => ''
     },
 
-    mcp: { version: '0.2.0' }
+    mcp: { version: '0.2.1' }
   }
 
   // 三形态共用的工具逻辑。签名保持不变（keystone 与队友按此接线）。
