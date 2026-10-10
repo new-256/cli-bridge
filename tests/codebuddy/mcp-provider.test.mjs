@@ -67,7 +67,7 @@ function spawnLines(io) {
 function spawnCount(io) { return spawnLines(io).length }
 
 test('meta 契约形态', () => {
-  assert.deepEqual(meta, { id: 'codebuddy', label: 'CODEBUDDY', version: '0.2.1' })
+  assert.deepEqual(meta, { id: 'codebuddy', label: 'CODEBUDDY', version: '0.2.2' })
 })
 
 test('tools(env) 三件套 + schema 合法 + check() 守卫通过', () => {

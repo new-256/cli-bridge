@@ -854,7 +854,7 @@ export default function defineProvider(deps = {}) {
       }
     },
 
-    mcp: { version: '0.2.1' }
+    mcp: { version: '0.2.2' }
   }
 
   // 三形态共用的工具逻辑（签名保持 keystone/队友接线契约不变）。

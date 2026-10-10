@@ -30,7 +30,7 @@ import * as codebuddyMcp from './providers/codebuddy.mjs'
 import * as mimoMcp from './providers/mimo.mjs'
 
 const SERVER_NAME = 'cli-bridge-mcp'
-const SERVER_VERSION = '0.2.1'
+const SERVER_VERSION = '0.2.2'
 const PROTOCOL = '2024-11-05'
 
 const PROVIDERS = [agyMcp, codebuddyMcp, mimoMcp]

@@ -23,7 +23,7 @@ test('client.js 语法可过 node --check', () => {
 })
 
 test('渲染引用的标识符都有定义（防「用了没声明」白屏）', () => {
-  for (const sym of ['DispatchCard', 'dispToggle', 'dispMove', 'dispLabels', 'ProviderSettingsCard', 'SettingsPanel', 'Indicator', 'adopt', 'reload', 'save', 'setDisp']) {
+  for (const sym of ['DispatchCard', 'dispToggle', 'dispMove', 'dispLabels', 'ProviderSettingsCard', 'SettingsPanel', 'Indicator', 'adopt', 'reload', 'save', 'setDisp', 'tab', 'setTab', 'tabs', 'activeMeta', 'activeOn', 'rankOf', 'orderedMeta', 'fresh', 'providerMetas', 'PRESET_ID_OF', 'FALLBACK_LABEL']) {
     const declared = new RegExp('(^|\\s)(function|const|let|var)\\s+' + sym + '\\b', 'm').test(SRC)
     assert.ok(declared, sym + ' must be declared in client.js')
   }
@@ -63,12 +63,26 @@ test('0.2.1 指示灯修复：pill 行只渲染新鲜项目（stale 过滤）', 
   assert.match(SRC, /fresh\[i\]\.cwd/, 'Pill iterates fresh entries')
 })
 
-test('0.2.1 卡片模式：总设置/每 CLI 卡分区 + 状态 chip', () => {
-  assert.match(SRC, /clbs-cards/, 'grid container class exists')
-  assert.match(SRC, /zh \? "总设置" : "Global"/, 'global section heading')
+test('横向标签页模式（0.2.2）：点名字切换，页面不长；扩展 = 多一个 tab', () => {
+  assert.match(SRC, /clbs-tabs/, 'horizontal tab bar container rendered')
+  assert.match(SRC, /\.clbs-tabs\{display:flex;gap:6px;flex-wrap:wrap/, 'tabs wrap when providers grow (4th/5th CLI needs no layout change)')
+  // hook 顺序红线：tab 状态必须与其它 hook 一起声明，且在 `if (!view)` 早期 return 之前，
+  // 否则 view 加载瞬间 hook 数量变化 → React 崩面板。
+  const hookPos = SRC.indexOf('react.useState("global")')
+  const earlyReturn = SRC.indexOf('if (!view) {')
+  assert.ok(hookPos > 0, 'tab state declared')
+  assert.ok(earlyReturn > 0 && hookPos < earlyReturn, 'tab hook before early return')
+  assert.match(SRC, /tab === "global"/, 'global tab shows only the dispatch card')
+  assert.match(SRC, /clbs-tab-dot" \+ \(on \? "" : " clbs-tab-dot-off"\)/, 'tab dot reflects enabled state')
+  assert.match(SRC, /activeMeta \? react\.createElement\(ProviderSettingsCard/, 'per-CLI tab renders a single card')
+  assert.doesNotMatch(SRC, /clbs-cards/, 'vertical grid stacking removed (page length must not grow per provider)')
+})
+
+test('CLI 卡头状态 chip 保留（与调度视图同源派生）', () => {
   assert.match(SRC, /clbs-chip clbs-chip-on/, 'enabled chip')
   assert.match(SRC, /clbs-chip clbs-chip-off/, 'disabled chip')
   assert.match(SRC, /clbs-chip clbs-chip-rank/, 'priority rank chip')
-  assert.match(SRC, /on: on, rank: rankOf\[meta\.id\]/, 'card receives scheduling-derived flags')
+  assert.match(SRC, /on: activeOn, rank: rankOf\[activeMeta\.id\]/, 'card receives scheduling-derived flags')
 })
+
 

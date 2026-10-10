@@ -25,11 +25,33 @@ window.__ModuleLoader__.load({
     let react = require("react");
 
     // provider 展示元数据（与后端 registry 对齐；渲染顺序）。
+    // ⚠ 仅作 fallback：新 CLI 接入时后端视图（providers 键 + scheduling.all/labels）是
+    // 权威轴，本表不更新也只丢 presetId 的「就绪灯」优化，卡片/标签页/调度自动跟上。
     var PROVIDERS = [
       { id: "agy", label: "AGY", presetId: "cordis-agy" },
       { id: "codebuddy", label: "CB", presetId: "codebuddy-first" },
       { id: "mimo", label: "MIMO", presetId: "cordis-mimo" }
     ];
+    const PRESET_ID_OF = {};
+    for (const m of PROVIDERS) PRESET_ID_OF[m.id] = m.presetId;
+    const FALLBACK_LABEL = {};
+    for (const m of PROVIDERS) FALLBACK_LABEL[m.id] = m.label;
+
+    // 后端驱动 id 轴：从调度视图（scheduling.all + labels）或 status 视图取全量 id，
+    // 本地 PROVIDERS 仅补 presetId（就绪灯判定用）。新增 provider = 后端 registry 一行，
+    // 本文件零改动。
+    function providerMetas(sc, extra) {
+      const ids = (sc && Array.isArray(sc.all)) ? sc.all.slice()
+        : (extra && Array.isArray(extra.all) ? extra.all.slice()
+          : PROVIDERS.map(function (m) { return m.id; }));
+      const labels = (sc && sc.labels) || (extra && extra.labels) || {};
+      const out = [];
+      for (const id of ids) {
+        out.push({ id: id, label: labels[id] || FALLBACK_LABEL[id] || String(id).toUpperCase(), presetId: PRESET_ID_OF[id] || null });
+      }
+      return out;
+    }
+
 
     const CSS = [
       ".clb-row{display:inline-flex;align-items:center;gap:6px}",
@@ -66,7 +88,14 @@ window.__ModuleLoader__.load({
       ".clbs-sub{color:var(--dsw-alias-label-secondary);font-size:12px;margin-top:2px}",
       ".clbs-card{border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:12px 14px}",
       ".clbs-card-h{font-weight:600;font-size:13px;margin-bottom:10px}",
-      ".clbs-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:12px;align-items:start}",
+      ".clbs-tabs{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--dsw-alias-border-l1);padding-bottom:10px}",
+      ".clbs-tab{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 12px;border-radius:13px;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);font-size:12px;cursor:pointer;font-family:inherit}",
+      ".clbs-tab:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l2)}",
+      ".clbs-tab-on{background:var(--dsw-static-blue-500,#3b82f6);border-color:var(--dsw-static-blue-500,#3b82f6);color:#fff;font-weight:600}",
+      ".clbs-tab-dot{width:7px;height:7px;border-radius:50%;background:var(--dsw-static-green-500,#22c55e);flex:none}",
+      ".clbs-tab-dot-off{background:var(--dsw-alias-label-tertiary,var(--dsw-alias-border-l2))}",
+      ".clbs-tab-rank{font-size:10px;opacity:.8}",
+
       ".clbs-card-off{opacity:.62}",
       ".clbs-card-hrow{display:flex;align-items:center;gap:8px;margin-bottom:10px}",
       ".clbs-card-t{font-weight:600;font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
@@ -177,7 +206,8 @@ window.__ModuleLoader__.load({
     function Popup(props) {
       const s = props.s, onClose = props.onClose;
       const sections = [];
-      for (const meta of PROVIDERS) {
+      const metas = providerMetas(null, (s && s.providers) ? { all: Object.keys(s.providers), labels: (s.scheduling && s.scheduling.labels) } : null);
+      for (const meta of metas) {
         const b = (s && s.providers && s.providers[meta.id]) || null;
         const ready = props.iAm[meta.id];
         const hasProjects = b && Array.isArray(b.projects) && b.projects.length;
@@ -236,8 +266,9 @@ window.__ModuleLoader__.load({
           });
       }
       const presetKnown = myPreset !== PRESET_UNKNOWN;
+      const metas = providerMetas(null, (s && s.providers) ? { all: Object.keys(s.providers), labels: (s.scheduling && s.scheduling.labels) } : null);
       const iAm = {};
-      for (const meta of PROVIDERS) {
+      for (const meta of metas) {
         const b = (s && s.providers && s.providers[meta.id]) || null;
         const hostList = (b && Array.isArray(b.presetSessions)) ? b.presetSessions : null;
         const inHostList = !!(hostList && sessionId && hostList.indexOf(sessionId) >= 0);
@@ -268,7 +299,7 @@ window.__ModuleLoader__.load({
       // 陈旧过滤（0.2.1 修复「指示灯长期存在」）：stale 项目（>10min 无活动且未运行）不再
       // 渲染成常亮灯。历史事故：一次失败后 ✗ AGY 灯永久挂在那 —— 弹窗里仍列 stale 项目作
       // 历史，但 pill 行只认新鲜活动。
-      for (const meta of PROVIDERS) {
+      for (const meta of metas) {
         const b = (s && s.providers && s.providers[meta.id]) || null;
         if (!b) continue;
         const fresh = (Array.isArray(b.projects) ? b.projects : []).filter(function (p) { return !p.stale; });
@@ -407,11 +438,15 @@ window.__ModuleLoader__.load({
       const lt = react.useState(false); const loading = lt[0]; const setLoading = lt[1];
       // 调度状态：disp.ord = 全量 id 的排序顺序（= priority），disp.enabled = 启用集合。
       const dt = react.useState({ ord: [], enabled: [] }); const disp = dt[0]; const setDisp = dt[1];
+      // 标签页选择（0.2.2 横向卡片）：必须在早期 return 之前声明（React hook 顺序恒定）。
+      const tt = react.useState("global"); const tab = tt[0]; const setTab = tt[1];
 
       const adopt = react.useCallback(function (v) {
         setView(v);
         const next = {};
-        for (const meta of PROVIDERS) {
+        // 后端驱动：以视图 providers 键为轴（新增 provider 零改动），本地表仅兜底。
+        const viewIds = (v && v.providers) ? Object.keys(v.providers) : PROVIDERS.map(function (m) { return m.id; });
+        for (const meta of providerMetas(v && v.scheduling, { all: viewIds })) {
           const pv = (v && v.providers && v.providers[meta.id]) || {};
           next[meta.id] = Object.assign({}, pv.values || {});
           const secs = pv.secrets || {};
@@ -461,7 +496,7 @@ window.__ModuleLoader__.load({
         if (!view || loading) return;
         setLoading(true); setMsg(null);
         const body = {};
-        for (const meta of PROVIDERS) {
+        for (const meta of providerMetas(view.scheduling, { all: view.providers ? Object.keys(view.providers) : null })) {
           const pv = (view.providers && view.providers[meta.id]) || {};
           if (!pv.present) continue;
           const fields = (pv.meta && Array.isArray(pv.meta.fields)) ? pv.meta.fields : [];
@@ -503,27 +538,44 @@ window.__ModuleLoader__.load({
       // 名次表：启用项在 ord 中的相对次序 = 后端 order（priority ∩ enabled）同源派生。
       const rankOf = {};
       (function () { let n = 0; for (const id of disp.ord) { if (disp.enabled.indexOf(id) >= 0) rankOf[id] = (++n); } })();
+      // id 轴 = 后端视图（scheduling.all ∪ providers 键），本地表只补 presetId。
       const orderedMeta = (function () {
         const byId = {};
-        for (const m of PROVIDERS) byId[m.id] = m;
+        for (const m of providerMetas(view.scheduling, { all: view.providers ? Object.keys(view.providers) : null })) byId[m.id] = m;
         const ordered = disp.ord.map(function (id) { return byId[id]; }).filter(Boolean);
-        for (const m of PROVIDERS) if (ordered.indexOf(m) < 0) ordered.push(m);
+        for (const id in byId) if (!ordered.some(function (m) { return m.id === id; })) ordered.push(byId[id]);
         return ordered;
       })();
+      // 横向标签页模式（0.2.2）：一排名字点击切换，页面永远只有一屏高度；
+      // 未来加第 4、5 个 CLI 只是多一个 tab（tabs 容器 flex-wrap 自动换行），
+      // 不再纵向堆叠。首排「总设置」= 调度（启用数量 + 优先级），其余 = 各 CLI 偏好。
+      const tabs = [react.createElement("button", {
+        key: "global", type: "button", className: "clbs-tab" + (tab === "global" ? " clbs-tab-on" : ""),
+        onClick: function () { setTab("global"); }
+      }, zh ? "总设置" : "Global")];
+      for (const meta of orderedMeta) {
+        const on = disp.enabled.indexOf(meta.id) >= 0;
+        const hasView = !!(view.providers && view.providers[meta.id] && view.providers[meta.id].present);
+        if (!hasView) continue;
+        tabs.push(react.createElement("button", {
+          key: meta.id, type: "button", className: "clbs-tab" + (tab === meta.id ? " clbs-tab-on" : ""),
+          title: (on ? (zh ? "已启用" : "enabled") : zh ? "未启用" : "disabled") + (on && rankOf[meta.id] ? " · " + (zh ? "优先级" : "priority") + " #" + rankOf[meta.id] : ""),
+          onClick: function () { setTab(meta.id); }
+        },
+          react.createElement("span", { className: "clbs-tab-dot" + (on ? "" : " clbs-tab-dot-off") }),
+          (dispLabels && dispLabels[meta.id]) || meta.label,
+          on && rankOf[meta.id] ? react.createElement("span", { className: "clbs-tab-rank" }, "#" + rankOf[meta.id]) : null));
+      }
+      const activeMeta = (function () { for (const m of orderedMeta) if (m.id === tab) return m; return null; })();
+      const activeOn = tab !== "global" && disp.enabled.indexOf(tab) >= 0;
       return react.createElement("div", { className: "clbs-root" },
         react.createElement("div", null,
           react.createElement("div", { className: "clbs-h" }, "CLI Bridge"),
           react.createElement("div", { className: "clbs-sub" }, "AGY / CodeBuddy / MiMo 三条 CLI 桥接的派发偏好。保存后对各自的 preset、动态插件与 MCP 三种形态即时生效。")),
-        react.createElement("div", null,
-          react.createElement("div", { className: "clbs-card-h" }, zh ? "总设置" : "Global"),
-          react.createElement(DispatchCard, { ord: disp.ord, enabled: disp.enabled, labels: dispLabels, onToggle: dispToggle, onMove: dispMove, supported: !!(view && view.scheduling) })),
-        // 卡片模式：每个 CLI 一张卡（网格排布），卡头带 启用/未启用 + 优先级名次 chip，
-        // 与上方总设置（调度）明确分区。卡片顺序跟随调度优先级。
-        react.createElement("div", { className: "clbs-cards" },
-          orderedMeta.map(function (meta) {
-            const on = disp.enabled.indexOf(meta.id) >= 0;
-            return react.createElement(ProviderSettingsCard, { key: meta.id, meta: meta, on: on, rank: rankOf[meta.id], zh: zh, view: view.providers && view.providers[meta.id], form: form[meta.id] || {}, setField: setField, clears: clears, setClear: setClear });
-          })),
+        react.createElement("div", { className: "clbs-tabs" }, tabs),
+        tab === "global"
+          ? react.createElement(DispatchCard, { ord: disp.ord, enabled: disp.enabled, labels: dispLabels, onToggle: dispToggle, onMove: dispMove, supported: !!(view && view.scheduling) })
+          : (activeMeta ? react.createElement(ProviderSettingsCard, { key: activeMeta.id, meta: activeMeta, on: activeOn, rank: rankOf[activeMeta.id], zh: zh, view: view.providers && view.providers[activeMeta.id], form: form[activeMeta.id] || {}, setField: setField, clears: clears, setClear: setClear }) : null),
         react.createElement("div", { className: "clbs-actions" },
           react.createElement("button", { className: "clbs-btn", type: "button", onClick: save, disabled: loading }, loading ? "保存中…" : "保存全部"),
           react.createElement("button", { className: "clbs-btn clbs-btn-ghost", type: "button", onClick: function () { setClears({}); reload(); } }, "重载"),

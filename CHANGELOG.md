@@ -9,6 +9,20 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 > - CodeBuddy 线：[docs/history/codebuddy/CHANGELOG.md](docs/history/codebuddy/CHANGELOG.md)（终版 1.6.2）
 > - MiMo 线：[docs/history/mimo/CHANGELOG.md](docs/history/mimo/CHANGELOG.md)（终版 1.2.9）
 
+## [0.2.2] - 2026-10-10
+
+### Changed
+- **设置面板改横向标签页**（替代 0.2.1 的纵向网格堆叠 —— 页面长度随 provider 数增长的
+  问题）：一排名字点击切换，同屏只渲染一张卡；「总设置」= 调度卡，其余 = 各 CLI 偏好卡
+  （卡头 chip 保留）。tab 上带 启用绿点/灰点 + 优先级 `#n`，顺序跟随优先级；
+  `flex-wrap` 使第 4、5 个 CLI 只是多一个 tab，布局零改动。
+- **id 轴后端驱动**：`providerMetas()` 以视图 `scheduling.all` ∪ `providers` 键为权威轴，
+  本地 `PROVIDERS` 表降级为 fallback（只补 presetId/label 展示）——新 provider 接入时
+  灯 pill、弹窗分区、标签页、调度卡、保存循环全部自动出现，client.js 零改动。
+### Fixed
+- React hook 顺序红线：tab 状态声明置于 `if (!view)` 早期 return 之前（否则 view 加载
+  瞬间 hook 数量变化 → 面板崩溃），`client-ui-surface` 静态锁。
+
 ## [0.2.1] - 2026-10-10
 
 ### Fixed

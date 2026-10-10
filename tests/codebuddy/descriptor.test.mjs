@@ -24,7 +24,7 @@ test('契约 ★ 字段齐备（PROVIDER-CONTRACT.md §1）', () => {
   assert.equal(p.exeName, 'codebuddy')
   assert.deepEqual(p.binEnvVars, ['CODEBUDDY_BIN', 'CODEBUDDY_EN_BIN', 'WORKBUDDY_BIN'])
   assert.equal(p.unavailableStatus, 'CODEBUDDY_UNAVAILABLE')
-  assert.equal(p.mcp.version, '0.2.1')
+  assert.equal(p.mcp.version, '0.2.2')
   assert.deepEqual(p.extraTools, [])
   for (const f of ['backends', 'normalizeBackend', 'resolveBackend', 'buildArgv', 'parseJson', 'buildResult', 'foldStreamEvent', 'isLimited', 'isTransientCliError', 'failureHint', 'preflight', 'runToolLogic', 'continueToolLogic', 'statusToolLogic', 'attach', 'hostOptions']) {
     assert.equal(typeof p[f], 'function', f + ' must be a function')
