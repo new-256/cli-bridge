@@ -14,6 +14,8 @@ import { fileURLToPath } from 'node:url'
 
 import defineProvider from '../../providers/agy.mjs'
 import { renderResult, renderStatus } from '../../core/bridge-kit.mjs'
+import { isBridgeEnabled } from '../../core/scheduling.mjs'
+import { PROVIDER_IDS } from '../../providers/registry.mjs'
 
 export const name = 'cli-bridge-agy'
 export const inject = ['tools', 'subprocess', 'systemPrompt', 'timer']
@@ -34,6 +36,9 @@ function resolveQuotaScript() {
 }
 
 export function apply(ctx) {
+  // 调度门禁（0.2.0）：用户在设置面板关掉 agy → 本形态不注册任何工具/政策段/心跳。
+  // 每次会话装配时现读文件（改设置下次会话即生效，无需重启宿主）；fail-open。
+  if (!isBridgeEnabled('agy', PROVIDER_IDS)) return
   const subprocess = ctx.subprocess
   const planMode = ctx.get('planMode')
   const sandboxPolicy = ctx.get('sandboxPolicy')

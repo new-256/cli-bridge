@@ -22,10 +22,13 @@
 //    agy 模板同款链路 —— MIMO_BIN/MIMO_CLI env > subprocess.resolveExecutable(PATH)。
 /*__KIT__*/
 /*__PROVIDER__*/
+/*__SCHED__*/
 
 return {
   inject: ['tools', 'subprocess', 'systemPrompt', 'timer'],
   apply(ctx) {
+    // 调度门禁（0.2.0）：设置面板关掉 mimo → 本形态不注册工具/政策段；fail-open。
+    if (!isBridgeEnabled('mimo', SCHED_ALL_IDS)) return
     const subprocess = ctx.subprocess
     const planMode = ctx.get('planMode')
     const sandboxPolicy = ctx.get('sandboxPolicy')

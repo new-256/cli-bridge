@@ -24,12 +24,13 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from '
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildMcpBridgePayload } from '../core/bridge-kit.mjs'
+import { resolveScheduling } from '../core/scheduling.mjs'
 import * as agyMcp from './providers/agy.mjs'
 import * as codebuddyMcp from './providers/codebuddy.mjs'
 import * as mimoMcp from './providers/mimo.mjs'
 
 const SERVER_NAME = 'cli-bridge-mcp'
-const SERVER_VERSION = '0.1.0'
+const SERVER_VERSION = '0.2.0'
 const PROTOCOL = '2024-11-05'
 
 const PROVIDERS = [agyMcp, codebuddyMcp, mimoMcp]
@@ -64,12 +65,22 @@ export function makeSnapshotWriter(id) {
 }
 
 function selectedProviders() {
+  // 钉住面（薄封装兼容语义）优先级最高：--provider= > env CLI_BRIDGE_PROVIDER。
   const arg = process.argv.find((a) => a.startsWith('--provider='))
-  const want = arg ? arg.slice('--provider='.length) : (process.env.CLI_BRIDGE_PROVIDER || '')
-  if (!want) return PROVIDERS
-  const hit = PROVIDERS.filter((p) => p.meta.id === want)
-  if (!hit.length) { io.log('unknown --provider=' + want); process.exit(2) }
-  return hit
+  const pinned = arg ? arg.slice('--provider='.length) : (process.env.CLI_BRIDGE_PROVIDER || '')
+  if (pinned) {
+    const hit = PROVIDERS.filter((p) => p.meta.id === pinned)
+    if (!hit.length) { io.log('unknown --provider=' + pinned); process.exit(2) }
+    return hit
+  }
+  // 无钉住 → 读统一设置文件的 _scheduling：enabled 过滤 + order 决定工具面顺序
+  // （MCP 子进程启动时读一次；文件缺失/坏值 = 全开，source:'default'）。
+  const ids = PROVIDERS.map((p) => p.meta.id)
+  const sched = resolveScheduling(ids, { env: process.env })
+  const byId = Object.create(null)
+  for (const p of PROVIDERS) byId[p.meta.id] = p
+  const picked = sched.order.map((id) => byId[id]).filter(Boolean)
+  return picked.length ? picked : PROVIDERS
 }
 
 function toolSurface() {
@@ -133,7 +144,8 @@ async function handleLine(line) {
 }
 
 if (process.argv.includes('--check')) {
-  const report = { ok: true, server: SERVER_NAME, version: SERVER_VERSION, providers: [], errors: [] }
+  const schedReport = resolveScheduling(PROVIDERS.map((p) => p.meta.id), { env: process.env })
+  const report = { ok: true, server: SERVER_NAME, version: SERVER_VERSION, scheduling: { source: schedReport.source, enabled: schedReport.enabled, order: schedReport.order }, providers: [], errors: [] }
   for (const p of selectedProviders()) {
     const entry = { id: p.meta.id, label: p.meta.label, version: p.meta.version, tools: [] }
     try {

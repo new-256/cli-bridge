@@ -8,15 +8,18 @@ import { fileURLToPath } from 'node:url'
 const TPL = fileURLToPath(new URL('../../dynamic/mimo.host.template.mjs', import.meta.url))
 const OUT = fileURLToPath(new URL('../../dynamic/mimo.host.js', import.meta.url))
 
-test('模板含且仅含一行 __KIT__ / 一行 __PROVIDER__ 占位标记', () => {
+test('模板含且仅含一行 __KIT__ / 一行 __PROVIDER__ / 一行 __SCHED__ 占位标记', () => {
   const src = readFileSync(TPL, 'utf8')
   const lines = src.split(/\r?\n/)
   const kit = lines.filter((l) => l.indexOf('/*__' + 'KIT__*/') >= 0)
   const prov = lines.filter((l) => l.indexOf('/*__' + 'PROVIDER__*/') >= 0)
+  const sched = lines.filter((l) => l.indexOf('/*__' + 'SCHED__*/') >= 0)
   assert.equal(kit.length, 1, 'exactly one kit placeholder line')
   assert.equal(prov.length, 1, 'exactly one provider placeholder line')
+  assert.equal(sched.length, 1, 'exactly one sched placeholder line')
   assert.equal(kit[0].trim(), '/*__' + 'KIT__*/')
   assert.equal(prov[0].trim(), '/*__' + 'PROVIDER__*/')
+  assert.equal(sched[0].trim(), '/*__' + 'SCHED__*/')
 })
 
 test('模板自身禁模块语法与 import.meta（沙箱 new Function / build 全局替换纪律）', () => {
@@ -40,6 +43,11 @@ test('生成物存在、无残留占位、可 node --check（CJS 包装下顶层
   // 生成物里 LIMIT_RE 只允许 kit 声明一处（mimo 侧必须带前缀命名）。
   const limitDecls = out.split(/\r?\n/).filter((l) => /^const LIMIT_RE\s*=/.test(l))
   assert.equal(limitDecls.length, 1, 'exactly one kit LIMIT_RE declaration; provider must not shadow')
+  // 调度单源内联 + apply() 门禁存在。
+  for (const sym of ['function isBridgeEnabled', 'function resolveScheduling', 'const SCHED_ALL_IDS = [']) {
+    assert.ok(out.includes(sym), 'generated host inlines ' + sym)
+  }
+  assert.ok(out.includes("isBridgeEnabled('mimo', SCHED_ALL_IDS)"), 'apply() guarded by scheduling')
   assert.ok(!/^\s*import\s[^(]*from/m.test(out), 'generated host has no residual imports')
   const node = process.execPath
   execFileSync(node, ['--check', OUT], { stdio: 'pipe' })

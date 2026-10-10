@@ -9,6 +9,39 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 > - CodeBuddy 线：[docs/history/codebuddy/CHANGELOG.md](docs/history/codebuddy/CHANGELOG.md)（终版 1.6.2）
 > - MiMo 线：[docs/history/mimo/CHANGELOG.md](docs/history/mimo/CHANGELOG.md)（终版 1.2.9）
 
+## [0.2.0] - 2026-10-10
+
+新增「CLI 调度」：让用户选择由智能体调用 CLI 时**启用哪些 CLI（数量）**以及**调用优先级**。
+
+### Added
+- **调度单源 `core/scheduling.mjs`**（纯逻辑、无 import，可同时被宿主 ESM 与动态沙箱文本内联消费）：
+  `normalizeScheduling` / `resolveScheduling` / `isBridgeEnabled`（门禁 helper）/ `defaultPriority` /
+  `describeScheduling`。语义：`enabled` = 勾选启用集合（未启用一面不注册任何工具/政策段/心跳），
+  `priority` = 数组顺序即调用建议顺序（首位最高）；文件缺失/坏值/无 fs → 全部启用 + 注册表顺序
+  （**fail-open**：读不到配置永远不等于关掉所有桥）。
+- **落盘**：统一设置文件新增顶层 `_scheduling` 区（下划线前缀 = 非 provider 区，旧代码逐分区读取
+  整区忽略 → 纯增量向后兼容）。`normalizeAll` / `settingsView` / `parseSettingsBody` 三区同步：
+  GET 返回 `scheduling:{enabled,priority,order,all,labels}`；POST 整区替换、类型严格（非对象 /
+  未知 id → 400）、**缺省 = 保持现值**（provider-only 提交绝不悄悄重置调度）。
+- **四形态贯穿**：① 6 个桥接宿主（3 preset + 3 dynamic 模板）`apply()` 首行门禁 —— 禁用面零注册；
+  ② 声明制 preset 注册顺序按 priority 排（三个 preset 恒常注册：禁用 ≠ 从目录消失，用户仍可切入排查）；
+  ③ MCP `selectedProviders()` 无钉住时按 `enabled` 过滤、按 `order` 排序（子进程启动读一次，重启刷新）；
+     本机实际注册的是 `dsh-home\bin\` 下三个自包含旧服务器（不依赖本包），故另附最小只读副本
+     `bin\cli-bridge-scheduling.mjs`（物料源 `deploy/legacy-mcp/`），三服务器 `tools/list`/`tools/call`
+     现读过滤 —— 面板关掉某面后 MCP 子进程重启即空工具面；语义单源仍是 `core/scheduling.mjs`。
+  ④ `GET /cli-bridge/status` 每次轮询现读并附 `scheduling` 快照（灯侧即时可见）。
+  env `CLI_BRIDGE_PROVIDER`（薄封装钉住单面）优先级最高；宿主形态传 `ignorePin` 不受全局 env 反噬。
+- **构建**：`scripts/build.mjs` 新增 `/*__SCHED__*/` 占位，内联 `core/scheduling.mjs` + 注入
+  `SCHED_ALL_IDS` 常量（沙箱禁 import，拿不到 registry）；旧模板无该占位则不注入（向后兼容）。
+- **UI**：设置面板顶部「调度 · 启用与优先级」卡 —— 每 CLI 一行（勾选 + 序号徽标 + ↑↓）；
+  provider 卡片顺序跟随优先级，禁用面仍渲染（不改开关也能修好它的 token/预选）；全禁用时红字警告。
+- `mcp/cli-bridge-mcp.mjs --check` 报告新增 `scheduling:{source,enabled,order}`，部署后一眼确认生效面。
+
+### Notes
+- 提示词连续性红线不受影响：政策段全文仍逐字来自 provider，门禁只做「注册 / 不注册」；
+  优先级以**注册与装配顺序**表达（preset 目录序 / MCP tools/list 序 / 提示段落序），不新增文案。
+- 生效时机：preset / 动态形态下次会话装配即读；MCP 子进程需重启才刷新工具面（面板保存提示已说明）。
+
 ## [0.1.0] - 2026-10-10
 
 首个统一版本：`agy-first-bridge`、`codebuddy-first-bridge`、`Xiaomi MiMo-bridge`

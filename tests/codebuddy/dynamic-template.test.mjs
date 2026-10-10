@@ -8,15 +8,18 @@ import { fileURLToPath } from 'node:url'
 const TPL = fileURLToPath(new URL('../../dynamic/codebuddy.host.template.mjs', import.meta.url))
 const OUT = fileURLToPath(new URL('../../dynamic/codebuddy.host.js', import.meta.url))
 
-test('模板含且仅含一行 __KIT__ / 一行 __PROVIDER__ 占位标记', () => {
+test('模板含且仅含一行 __KIT__ / 一行 __PROVIDER__ / 一行 __SCHED__ 占位标记', () => {
   const src = readFileSync(TPL, 'utf8')
   const lines = src.split(/\r?\n/)
   const kit = lines.filter((l) => l.indexOf('/*__' + 'KIT__*/') >= 0)
   const prov = lines.filter((l) => l.indexOf('/*__' + 'PROVIDER__*/') >= 0)
+  const sched = lines.filter((l) => l.indexOf('/*__' + 'SCHED__*/') >= 0)
   assert.equal(kit.length, 1, 'exactly one kit placeholder line')
   assert.equal(prov.length, 1, 'exactly one provider placeholder line')
+  assert.equal(sched.length, 1, 'exactly one sched placeholder line')
   assert.equal(kit[0].trim(), '/*__' + 'KIT__*/')
   assert.equal(prov[0].trim(), '/*__' + 'PROVIDER__*/')
+  assert.equal(sched[0].trim(), '/*__' + 'SCHED__*/')
 })
 
 test('模板自身禁模块语法与 import.meta（沙箱 new Function / build 全局替换纪律）', () => {
@@ -41,6 +44,13 @@ test('生成物存在、无残留占位、可 node --check（CJS 包装下顶层
   const limitDecls = out.split(/\r?\n/).filter((l) => /^const LIMIT_RE\s*=/.test(l))
   assert.equal(limitDecls.length, 1, 'exactly one kit LIMIT_RE declaration; provider must not shadow')
   assert.ok(/const CODEBUDDY_LIMIT_RE\s*=/.test(out), 'provider limit table uses prefixed name')
+  // 调度单源内联（同上防线：scheduling 的 builtin 读取 helper 必须 sched 前缀命名，
+  // 否则与 providers/codebuddy.mjs 的 builtinModule 重复声明 → 生成物语法炸）。
+  for (const sym of ['function isBridgeEnabled', 'function resolveScheduling', 'const SCHED_ALL_IDS = [']) {
+    assert.ok(out.includes(sym), 'generated host inlines ' + sym)
+  }
+  assert.ok(out.includes("isBridgeEnabled('codebuddy', SCHED_ALL_IDS)"), 'apply() guarded by scheduling')
+  assert.equal(out.split(/\r?\n/).filter((l) => /^\s*function builtinModule\s*\(/.test(l)).length, 1, 'exactly one bare builtinModule (provider); scheduling must use sched-prefixed name (sloppy-mode redeclaration would silently shadow)')
   assert.ok(!/^\s*import\s[^(]*from/m.test(out), 'generated host has no residual imports')
   execFileSync(process.execPath, ['--check', OUT], { stdio: 'pipe' })
 })

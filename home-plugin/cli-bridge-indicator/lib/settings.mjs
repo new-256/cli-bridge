@@ -1,14 +1,19 @@
 // home-plugin/cli-bridge-indicator/lib/settings.mjs — 统一设置读写（keystone）。
 //
 // 单一文件 {DSH_HOME}/cli-bridge-settings.json，按 provider id 分区：
-//   { "agy": {...}, "codebuddy": {...}, "mimo": {...}, "updatedAt": 123 }
+//   { "agy": {...}, "codebuddy": {...}, "mimo": {...}, "_scheduling": {...}, "updatedAt": 123 }
 // 分区契约（keys/secretKeys/defaults/normalize/meta/diagnose）见 PROVIDER-CONTRACT.md §3，
 // 纯逻辑全部来自 providers/registry.mjs 的描述符；本文件只做落盘、掩码、清洗。
+//
+// `_scheduling` 区（0.2.0 调度）：顶层非 provider 区（下划线前缀 = 永不与 provider id
+// 撞名；旧代码逐分区读取会整区忽略它 → 纯增量向后兼容）。{ enabled:[ids], priority:[ids] }
+// = 启用集合 + 调用优先级（数组顺序即优先级）；清洗逻辑单源在 core/scheduling.mjs。
 //
 // token 语义（与 codebuddy v1.3.x 完全一致）：GET 永不回传明文（只回 {set,hint} 掩码）；
 // POST 空串/缺省 = 保持现值；`<key>Clear: true` = 显式清除。
 
 import { PROVIDER_IDS, createProvider } from '../../../providers/registry.mjs'
+import { SCHEDULING_SECTION, normalizeScheduling } from '../../../core/scheduling.mjs'
 
 export const SETTINGS_FILE_NAME = 'cli-bridge-settings.json'
 
@@ -126,7 +131,14 @@ export function normalizeAll(raw, io) {
     } catch (e) { }
   }
   if (typeof raw.updatedAt === 'number' && raw.updatedAt > 0) snap.updatedAt = raw.updatedAt
+  const sched = normalizeScheduling(raw[SCHEDULING_SECTION], PROVIDER_IDS)
+  snap[SCHEDULING_SECTION] = { enabled: sched.enabled, priority: sched.priority }
   return applyLegacy(snap, map, io, touched)
+}
+
+/** 生效调度（含派生 order）：任何来源（文件缺 _ 区/坏值）都回落全开 + 注册表顺序。 */
+export function schedulingOf(snap, io) {
+  return normalizeScheduling(snap && snap[SCHEDULING_SECTION], PROVIDER_IDS)
 }
 
 // 旧包设置文件的字段级回退：只补「统一文件里从未写过这个键」的字段（touched 记录原始
@@ -214,7 +226,16 @@ export function settingsView(io) {
     try { if (d.settings.diagnose) view.diagnosis = d.settings.diagnose(snap[id], o.env) } catch (e) { }
     providers[id] = view
   }
-  return { fileName: SETTINGS_FILE_NAME, updatedAt: snap.updatedAt || 0, providers }
+  const sched = normalizeScheduling(snap[SCHEDULING_SECTION], PROVIDER_IDS)
+  const labels = Object.create(null)
+  for (const id of PROVIDER_IDS) labels[id] = (map[id] && map[id].label) || id
+  return {
+    fileName: SETTINGS_FILE_NAME, updatedAt: snap.updatedAt || 0, providers,
+    scheduling: {
+      enabled: sched.enabled, priority: sched.priority, order: sched.order,
+      all: PROVIDER_IDS.slice(), labels
+    }
+  }
 }
 
 /**
@@ -232,6 +253,9 @@ export function parseSettingsBody(text, io) {
   const cur = effectiveSettings(o)
   const next = Object.create(null)
   for (const id of PROVIDER_IDS) next[id] = Object.assign({}, cur[id] || {})
+  // 保持语义：body 不带 _scheduling 时沿用现值（旧客户端/其它调用方 provider-only 提交
+  // 绝不能把用户的调度配置悄悄重置）。
+  if (cur[SCHEDULING_SECTION]) next[SCHEDULING_SECTION] = Object.assign({}, cur[SCHEDULING_SECTION])
   for (const id of Object.keys(raw)) {
     if (PROVIDER_IDS.indexOf(id) < 0) continue
     const d = map[id]
@@ -249,6 +273,27 @@ export function parseSettingsBody(text, io) {
         continue
       }
       next[id][k] = v.trim()
+    }
+  }
+  // 调度区：整区替换语义（面板每次提交完整 enabled+priority）；缺省 = 保持现值。
+  // 类型严格：非对象/数组元素含未知 id 直接 400，避免半写坏配置。
+  if (Object.prototype.hasOwnProperty.call(raw, SCHEDULING_SECTION)) {
+    const sec = raw[SCHEDULING_SECTION]
+    if (!sec || typeof sec !== 'object' || Array.isArray(sec)) return { ok: false, error: 'field _scheduling must be an object' }
+    for (const key of ['enabled', 'priority']) {
+      if (sec[key] === undefined) continue
+      if (!Array.isArray(sec[key])) return { ok: false, error: 'field _scheduling.' + key + ' must be an array' }
+      for (const x of sec[key]) {
+        if (typeof x !== 'string' || PROVIDER_IDS.indexOf(x) < 0) return { ok: false, error: 'unknown provider id in _scheduling.' + key + ': ' + JSON.stringify(x) }
+      }
+    }
+    if (sec.enabled !== undefined || sec.priority !== undefined) {
+      const base = normalizeScheduling(cur[SCHEDULING_SECTION], PROVIDER_IDS)
+      const merged = normalizeScheduling({
+        enabled: Array.isArray(sec.enabled) ? sec.enabled : base.enabled,
+        priority: Array.isArray(sec.priority) ? sec.priority : base.priority
+      }, PROVIDER_IDS)
+      next[SCHEDULING_SECTION] = { enabled: merged.enabled, priority: merged.priority }
     }
   }
   return { ok: true, value: normalizeAll(next, o) }

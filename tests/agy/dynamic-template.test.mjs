@@ -8,15 +8,18 @@ import { fileURLToPath } from 'node:url'
 const TPL = fileURLToPath(new URL('../../dynamic/agy.host.template.mjs', import.meta.url))
 const OUT = fileURLToPath(new URL('../../dynamic/agy.host.js', import.meta.url))
 
-test('模板含且仅含一行 __KIT__ / 一行 __PROVIDER__ 占位标记', () => {
+test('模板含且仅含一行 __KIT__ / 一行 __PROVIDER__ / 一行 __SCHED__ 占位标记', () => {
   const src = readFileSync(TPL, 'utf8')
   const lines = src.split(/\r?\n/)
   const kit = lines.filter((l) => l.indexOf('/*__' + 'KIT__*/') >= 0)
   const prov = lines.filter((l) => l.indexOf('/*__' + 'PROVIDER__*/') >= 0)
+  const sched = lines.filter((l) => l.indexOf('/*__' + 'SCHED__*/') >= 0)
   assert.equal(kit.length, 1, 'exactly one kit placeholder line')
   assert.equal(prov.length, 1, 'exactly one provider placeholder line')
+  assert.equal(sched.length, 1, 'exactly one sched placeholder line')
   assert.equal(kit[0].trim(), '/*__' + 'KIT__*/')
   assert.equal(prov[0].trim(), '/*__' + 'PROVIDER__*/')
+  assert.equal(sched[0].trim(), '/*__' + 'SCHED__*/')
 })
 
 test('模板自身禁模块语法与 import.meta（沙箱 new Function / build 全局替换纪律）', () => {
@@ -38,6 +41,11 @@ test('生成物存在、无残留占位、可 node --check（CJS 包装下顶层
   for (const sym of ['function defineProvider', 'function createRunner', 'function createStatusEngine', 'function renderStatus']) {
     assert.ok(out.includes(sym), 'generated host inlines ' + sym)
   }
+  // 调度单源也必须内联（沙箱禁 import，门禁只能在文件内自足）。
+  for (const sym of ['function isBridgeEnabled', 'function resolveScheduling', 'const SCHED_ALL_IDS = [']) {
+    assert.ok(out.includes(sym), 'generated host inlines ' + sym)
+  }
+  assert.ok(out.includes("isBridgeEnabled('agy', SCHED_ALL_IDS)"), 'apply() guarded by scheduling')
   assert.ok(!/^\s*import\s[^(]*from/m.test(out), 'generated host has no residual imports')
   const node = process.execPath
   execFileSync(node, ['--check', OUT], { stdio: 'pipe' })

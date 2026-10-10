@@ -18,6 +18,7 @@ import { pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { resolveScheduling } from '../../../core/scheduling.mjs'
 
 export const PKG_NAME = '@luchenglong/cli-bridge'
 
@@ -67,9 +68,27 @@ export async function buildPresetDefinition(id) {
 /**
  * 在 indicator 的 ctx 上挂「agentPresets 就绪 → 注册三个 preset」等待器。
  * 返回每个 provider 的注册状态数组（诊断用）；任何异常都不外抛。
+ *
+ * 调度语义（0.2.0）：三个 preset 恒常注册（可读性/可回退优先 —— 禁用≠从目录消失，
+ * 用户随时可切进禁用 preset 排查），注册【顺序】按 priority 排列；真正的「不启用」
+ * 发生在桥接插件 apply()：读 _scheduling，禁用面不注册任何工具/政策段（安全且即时，
+ * 改设置只影响下次会话，无需重新注册表）。opts.ids 显式传入时跳过调度排序。
  */
 export function declareBridgePresets(ctx, opts) {
-  const ids = (opts && opts.ids) || PROVIDER_IDS_FALLBACK
+  let ids = (opts && opts.ids) || PROVIDER_IDS_FALLBACK
+  if (!opts || !opts.ids) {
+    try {
+      const sched = resolveScheduling(PROVIDER_IDS_FALLBACK, opts && opts.io)
+      // 顺序 = 启用项（order = priority ∩ enabled）在前，禁用项按 priority 顺序补尾。
+      // UI 卡片序 / preset 目录序 / MCP 工具序三处因此永远一致（priority 是总轴，
+      // enabled 只决定 apply() 里注不注册工具，不决定它排在哪儿）。
+      const tail = sched.priority.filter((x) => sched.order.indexOf(x) < 0)
+      const ordered = sched.order.slice()
+      for (const id of tail) ordered.push(id)
+      for (const id of PROVIDER_IDS_FALLBACK) if (ordered.indexOf(id) < 0) ordered.push(id)
+      ids = ordered
+    } catch (e) { /* 调度不可得 = 缺省顺序，注册不受影响 */ }
+  }
   const out = []
   if (typeof ctx.inject !== 'function') return out
   for (const id of ids) {

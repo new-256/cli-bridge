@@ -18,6 +18,8 @@ import path from 'node:path'
 
 import defineProvider from '../../providers/codebuddy.mjs'
 import { renderResult, renderStatus } from '../../core/bridge-kit.mjs'
+import { isBridgeEnabled } from '../../core/scheduling.mjs'
+import { PROVIDER_IDS } from '../../providers/registry.mjs'
 // 统一设置文件（keystone 单源：含旧 codebuddy-bridge-settings.json 字段级迁移）。
 import { readSettingsFile, effectiveSettings } from '../../home-plugin/cli-bridge-indicator/lib/settings.mjs'
 
@@ -30,6 +32,8 @@ const OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
 const CWD_FALLBACK = 'C:\\Users\\lcl\\Desktop\\codebuddy-bridge'
 
 export function apply(ctx, config) {
+  // 调度门禁（0.2.0）：用户关掉 codebuddy → 本形态不注册工具/政策段/心跳；fail-open。
+  if (!isBridgeEnabled('codebuddy', PROVIDER_IDS)) return
   const subprocess = ctx.subprocess
   const planMode = ctx.get('planMode')
   const sandboxPolicy = ctx.get('sandboxPolicy')

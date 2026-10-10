@@ -89,7 +89,15 @@ window.__ModuleLoader__.load({
       ".clbs-badge{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 7px;border-radius:9px;font-size:11px;white-space:nowrap}",
       ".clbs-badge-ok{color:var(--dsw-static-green-500,#22c55e);border:1px solid var(--dsw-static-green-500,#22c55e)}",
       ".clbs-badge-warn{color:var(--dsw-alias-state-warn-primary);border:1px solid var(--dsw-alias-state-warn-primary)}",
-      ".clbs-badge-err{color:var(--dsw-alias-state-error-primary);border:1px solid var(--dsw-alias-state-error-primary)}"
+      ".clbs-badge-err{color:var(--dsw-alias-state-error-primary);border:1px solid var(--dsw-alias-state-error-primary)}",
+      ".clbs-disp-row{display:grid;grid-template-columns:auto auto 1fr auto;gap:10px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--dsw-alias-border-l1)}",
+      ".clbs-disp-row:last-child{border-bottom:none}",
+      ".clbs-disp-name{font-weight:600;font-size:12px}",
+      ".clbs-disp-off .clbs-disp-name{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));font-weight:400}",
+      ".clbs-disp-ord{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;border-radius:9px;background:var(--dsw-static-blue-500,#3b82f6);color:#fff;font-size:11px;font-weight:600}",
+      ".clbs-disp-btn{width:24px;height:22px;border-radius:5px;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1;cursor:pointer;padding:0}",
+      ".clbs-disp-btn:hover{border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary)}",
+      ".clbs-disp-btn:disabled{opacity:.3;cursor:default}"
     ].join("");
     if (typeof document !== "undefined" && document.querySelector('style[data-plugin-css="cli-bridge-indicator"]') === null) {
       const tag = document.createElement("style");
@@ -312,6 +320,41 @@ window.__ModuleLoader__.load({
         f.note ? react.createElement("div", { className: "clbs-note" }, f.note) : null);
     }
 
+    // ── 调度卡（0.2.0）：勾选启用哪些 CLI + 上下移排定调用优先级（顺序=优先级）──
+    // ord 数组 = 全量 id 的展示/排序顺序；enabled = 启用的 id 集合。未启用者沉到列表
+    // 底部但仍可 ↑↓（改的是 priority，不代表顺序变了就自动启用）。优先级只对启用项有意义，
+    // 后端 order 派生自 priority ∩ enabled，UI 这里把 disabled 项以灰显示但保留其 priority 位。
+    function DispatchCard(props) {
+      const ord = props.ord, enabled = props.enabled, labels = props.labels;
+      const toggle = props.onToggle, move = props.onMove;
+      const anyEnabled = enabled.length > 0;
+      const zh = (function () { try { return String(navigator.language || "").toLowerCase().indexOf("zh") === 0; } catch (e) { return false; } })();
+      const rankOf = {};
+      // 展示序 = ord 全量；序号徽标只对启用项计数。
+      let n = 0;
+      for (const id of ord) { if (enabled.indexOf(id) >= 0) { rankOf[id] = (++n); } }
+      return react.createElement("div", { className: "clbs-card" },
+        react.createElement("div", { className: "clbs-card-h" }, zh ? "调度 · 启用与优先级" : "Dispatch · enable & priority"),
+        react.createElement("div", { className: "clbs-sub", style: { margin: "-4px 0 8px" } },
+          zh ? "勾选要启用的 CLI（决定调用面数量），↑↓ 排定智能体的调用优先级（首位最高）。保存后 preset / 动态 / MCP 三形态生效（MCP 需重启子进程）。"
+             : "Check which CLIs to enable, use ↑↓ to set call priority (top = highest)."),
+        ord.map(function (id, idx) {
+          const on = enabled.indexOf(id) >= 0;
+          return react.createElement("div", { key: id, className: "clbs-disp-row" + (on ? "" : " clbs-disp-off") },
+            react.createElement("label", { className: "clbs-check" },
+              react.createElement("input", { type: "checkbox", checked: on, onChange: function () { toggle(id); } })),
+            react.createElement("span", null,
+              on ? react.createElement("span", { className: "clbs-disp-ord" }, String(rankOf[id])) : react.createElement("span", { className: "clbs-disp-ord", style: { background: "transparent", color: "var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary))", border: "1px dashed var(--dsw-alias-border-l1)" }, title: zh ? "未启用" : "disabled" }, "—"),
+              react.createElement("span", { className: "clbs-disp-name", style: { marginLeft: "8px" } }, (labels && labels[id]) || id)),
+            react.createElement("span", null),
+            react.createElement("span", { style: { display: "inline-flex", gap: "4px" } },
+              react.createElement("button", { className: "clbs-disp-btn", type: "button", disabled: idx === 0, onClick: function () { move(idx, -1); }, title: zh ? "上移（提高优先级）" : "up" }, "\u2191"),
+              react.createElement("button", { className: "clbs-disp-btn", type: "button", disabled: idx === ord.length - 1, onClick: function () { move(idx, 1); }, title: zh ? "下移（降低优先级）" : "down" }, "\u2193")));
+        }),
+        !anyEnabled ? react.createElement("div", { className: "clbs-msg clbs-msg-err", style: { marginTop: "8px" } },
+          zh ? "⚠ 全部禁用：三形态都不会注册任何 CLI 工具。" : "All disabled: no CLI tools will be registered.") : null);
+    }
+
     function ProviderSettingsCard(props) {
       const meta = props.meta, view = props.view, form = props.form, setField = props.setField, clears = props.clears, setClear = props.setClear;
       if (!view || !view.present) return null;
@@ -338,6 +381,8 @@ window.__ModuleLoader__.load({
       const ct = react.useState({}); const clears = ct[0]; const setClears = ct[1];
       const mt = react.useState(null); const msg = mt[0]; const setMsg = mt[1];
       const lt = react.useState(false); const loading = lt[0]; const setLoading = lt[1];
+      // 调度状态：disp.ord = 全量 id 的排序顺序（= priority），disp.enabled = 启用集合。
+      const dt = react.useState({ ord: [], enabled: [] }); const disp = dt[0]; const setDisp = dt[1];
 
       const adopt = react.useCallback(function (v) {
         setView(v);
@@ -349,6 +394,16 @@ window.__ModuleLoader__.load({
           for (const k of Object.keys(secs)) next[meta.id][k] = "";
         }
         setForm(next);
+        // 调度视图：后端 scheduling.priority = 全量 id 的完整顺序（未启用的也在其中，
+        // 保留其位置，灰显可移动）；scheduling.enabled = 启用集合。启用项的序号徽标
+        // = 它们在 priority 里的相对次序（后端 order 同派生规则，UI 与生效面一致）。
+        const sc = (v && v.scheduling) || {};
+        const all = Array.isArray(sc.all) ? sc.all : PROVIDERS.map(function (m) { return m.id; });
+        const en = Array.isArray(sc.enabled) ? sc.enabled.filter(function (x) { return all.indexOf(x) >= 0; }) : all.slice();
+        const srcOrd = Array.isArray(sc.priority) && sc.priority.length ? sc.priority : (Array.isArray(sc.order) ? sc.order : en);
+        const ord = srcOrd.filter(function (x) { return all.indexOf(x) >= 0; });
+        for (const id of all) if (ord.indexOf(id) < 0) ord.push(id);
+        setDisp({ ord: ord, enabled: en });
       }, []);
       const reload = react.useCallback(function () {
         fetch("/cli-bridge/settings", { cache: "no-store" })
@@ -360,6 +415,23 @@ window.__ModuleLoader__.load({
 
       const setField = function (id, k, v) { setForm(function (f) { const n = Object.assign({}, f); n[id] = Object.assign({}, n[id]); n[id][k] = v; return n; }); };
       const setClear = function (id, k, b) { setClears(function (c) { const n = Object.assign({}, c); n[id] = Object.assign({}, n[id]); n[id][k] = b; return n; }); };
+
+      const dispToggle = function (id) {
+        setDisp(function (d) {
+          const en = d.enabled.indexOf(id) >= 0 ? d.enabled.filter(function (x) { return x !== id; }) : d.enabled.concat([id]);
+          return { ord: d.ord, enabled: en };
+        });
+      };
+      const dispMove = function (idx, delta) {
+        setDisp(function (d) {
+          const j = idx + delta;
+          if (idx < 0 || j < 0 || idx >= d.ord.length || j >= d.ord.length) return d;
+          const ord = d.ord.slice();
+          const tmp = ord[idx]; ord[idx] = ord[j]; ord[j] = tmp;
+          return { ord: ord, enabled: d.enabled };
+        });
+      };
+      const dispLabels = (view && view.scheduling && view.scheduling.labels) || {};
 
       const save = function () {
         if (!view || loading) return;
@@ -379,13 +451,15 @@ window.__ModuleLoader__.load({
           }
           body[meta.id] = part;
         }
+        // 调度区：enabled = 启用集合，priority = ord 全量顺序（后端 order 派生 ∩ enabled）。
+        body._scheduling = { enabled: disp.enabled.slice(), priority: disp.ord.slice() };
         fetch("/cli-bridge/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
           .then(function (r) { return r.json().then(function (j) { return { code: r.status, j: j }; }); })
           .then(function (res) {
             setLoading(false);
             if (res.code === 200 && res.j && res.j.ok) {
               setClears({}); if (res.j.settings) adopt(res.j.settings);
-              setMsg({ kind: "ok", text: "已保存 ✓ 立即生效（preset / 动态 / MCP 三形态共享同一份设置）" });
+              setMsg({ kind: "ok", text: "已保存 ✓ 调度 / 偏好即时生效（preset、动态形态下次会话装配即读；MCP 子进程需重启才刷新工具面）" });
             } else setMsg({ kind: "err", text: "保存失败：" + ((res.j && res.j.error) || ("HTTP " + res.code)) });
           })
           .catch(function (e) { setLoading(false); setMsg({ kind: "err", text: "保存失败：" + e.message }); });
@@ -400,7 +474,15 @@ window.__ModuleLoader__.load({
         react.createElement("div", null,
           react.createElement("div", { className: "clbs-h" }, "CLI Bridge"),
           react.createElement("div", { className: "clbs-sub" }, "AGY / CodeBuddy / MiMo 三条 CLI 桥接的派发偏好。保存后对各自的 preset、动态插件与 MCP 三种形态即时生效。")),
-        PROVIDERS.map(function (meta) {
+        react.createElement(DispatchCard, { ord: disp.ord, enabled: disp.enabled, labels: dispLabels, onToggle: dispToggle, onMove: dispMove }),
+        // 卡片顺序跟随调度优先级；未启用的仍渲染（用户要能不改开关也修好它的 token/预选）。
+        (function () {
+          const byId = {};
+          for (const m of PROVIDERS) byId[m.id] = m;
+          const ordered = disp.ord.map(function (id) { return byId[id]; }).filter(Boolean);
+          for (const m of PROVIDERS) if (ordered.indexOf(m) < 0) ordered.push(m);
+          return ordered;
+        })().map(function (meta) {
           return react.createElement(ProviderSettingsCard, { key: meta.id, meta: meta, view: view.providers && view.providers[meta.id], form: form[meta.id] || {}, setField: setField, clears: clears, setClear: setClear });
         }),
         react.createElement("div", { className: "clbs-actions" },

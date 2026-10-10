@@ -3,8 +3,9 @@
 // 生成物（勿手改；`--check` 模式漂移即失败，npm test 里的 build-sync 测试调用它）：
 //   1. dynamic/<id>.host.js            ← dynamic/<id>.host.template.mjs
 //      把 core/bridge-kit.mjs 内联进 /*__KIT__*/、providers/<id>.mjs 内联进
-//      /*__PROVIDER__*/（动态沙箱禁止 import，只能文本注入；单标记替换防递归错乱）。
-//      注入时剥离两段的 `import ... from '...mjs'` 行并把 `export ` 关键字去掉。
+//      /*__PROVIDER__*/、core/scheduling.mjs（+SCHED_ALL_IDS 常量）内联进
+//      /*__SCHED__*/（动态沙箱禁止 import，只能文本注入；单标记替换防递归错乱）。
+//      注入时剥离各段的 `import ... from '...mjs'` 行并把 `export ` 关键字去掉。
 //   2. preset/<id>/agent.cordis.yml    ← preset/<id>/plugin-list.mjs（唯一权威源）
 //      纯 JS 插件清单落地为 legacy 目录形态 YAML（{__jsExpr} → !!js 块）。
 //      两者同源生成，结构性消除「yml 与声明制漂移」这一历史风险。
@@ -68,10 +69,18 @@ function buildDynamicHost(id) {
   const tpl = read(tplRel)
   const kit = stripModuleSyntax(read('core/bridge-kit.mjs'), 'core/bridge-kit.mjs')
   const prov = stripModuleSyntax(read('providers/' + id + '.mjs'), 'providers/' + id + '.mjs')
+  // 调度单源（0.2.0）：core/scheduling.mjs 无 import，可安全内联进沙箱作用域。
+  // SCHED_ALL_IDS 由构建注入（全量 provider 清单）—— 沙箱禁 import，拿不到 registry。
+  // 模板没有 /*__SCHED__*/ 占位（旧模板）→ 不注入，保持向后兼容。
+  const sched = stripModuleSyntax(read('core/scheduling.mjs'), 'core/scheduling.mjs')
+    + '\nconst SCHED_ALL_IDS = ' + JSON.stringify(ids) + '\n'
   if (!tpl.includes('/*__KIT__*/') || !tpl.includes('/*__PROVIDER__*/')) {
     throw new Error(tplRel + ' missing /*__KIT__*/ or /*__PROVIDER__*/ placeholder')
   }
-  return tpl.replace('/*__KIT__*/', () => kit).replace('/*__PROVIDER__*/', () => prov)
+  let out = tpl.replace('/*__KIT__*/', () => kit).replace('/*__PROVIDER__*/', () => prov)
+  if (out.includes('/*__SCHED__*/')) out = out.replace('/*__SCHED__*/', () => sched)
+  else if (tpl.includes('/*__SCHED__*/')) throw new Error(tplRel + ': __SCHED__ placeholder vanished after other replacements')
+  return out
 }
 
 for (const id of ids) {

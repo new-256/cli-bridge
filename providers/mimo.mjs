@@ -767,7 +767,7 @@ export default function defineProvider(deps = {}) {
       }
     },
 
-    mcp: { version: '0.1.0' }
+    mcp: { version: '0.2.0' }
   }
 
   let desktopHealthCache = { ok: null, at: 0 }

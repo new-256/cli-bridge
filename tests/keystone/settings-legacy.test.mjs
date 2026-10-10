@@ -10,7 +10,7 @@ import assert from 'node:assert/strict'
 import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { settingsView, parseSettingsBody, writeSettingsFile, effectiveSettings } from '../../home-plugin/cli-bridge-indicator/lib/settings.mjs'
+import { settingsView, parseSettingsBody, writeSettingsFile, readSettingsFile, effectiveSettings } from '../../home-plugin/cli-bridge-indicator/lib/settings.mjs'
 import { createProvider } from '../../providers/registry.mjs'
 
 function freshIo() {
@@ -98,5 +98,70 @@ test('legacy migration: mimo backend/desktopModel key mapping', { skip: (() => {
     const eff = effectiveSettings(io)
     assert.equal(eff.mimo.preferredBackend, 'mimo-desktop')
     assert.equal(eff.mimo.desktopModel, 'mimo-auto')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+// ── _scheduling 区（0.2.0）：读写、视图、校验、保持语义 ──────────────────────
+test('scheduling: 文件无 _ 区 → 视图缺省全开（all/labels 恒有）', () => {
+  const { io } = freshIo()
+  const v = settingsView(io)
+  assert.deepEqual(v.scheduling.enabled, ['agy', 'codebuddy', 'mimo'])
+  assert.deepEqual(v.scheduling.order, ['agy', 'codebuddy', 'mimo'])
+  assert.deepEqual(v.scheduling.all, ['agy', 'codebuddy', 'mimo'])
+  assert.equal(v.scheduling.labels.agy, 'AGY')
+})
+
+test('scheduling: 文件 _ 区被 normalizeAll 保留并在视图里派生 order', () => {
+  const { dir, unified } = freshIo()
+  try {
+    writeFileSync(unified, JSON.stringify({ _scheduling: { enabled: ['mimo', 'agy'], priority: ['mimo', 'agy', 'codebuddy'] } }))
+    const io = { env: { DSH_HOME: dir }, path: unified }
+    const v = settingsView(io)
+    assert.deepEqual(v.scheduling.enabled, ['mimo', 'agy'])
+    assert.deepEqual(v.scheduling.order, ['mimo', 'agy'], 'order = priority ∩ enabled')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('scheduling: POST 整区替换 + 类型严格（未知 id / 非数组 / 非对象 → 400）', () => {
+  const { io } = freshIo()
+  const ok = parseSettingsBody('{"_scheduling":{"enabled":["codebuddy"],"priority":["codebuddy","agy","mimo"]}}', io)
+  assert.equal(ok.ok, true)
+  assert.deepEqual(ok.value._scheduling.enabled, ['codebuddy'])
+  for (const bad of [
+    '{"_scheduling":"nope"}',
+    '{"_scheduling":[]}',
+    '{"_scheduling":{"enabled":"agy"}}',
+    '{"_scheduling":{"enabled":["ghost"]}}',
+    '{"_scheduling":{"priority":[7]}}'
+  ]) {
+    assert.equal(parseSettingsBody(bad, io).ok, false, 'must reject ' + bad)
+  }
+})
+
+test('scheduling: provider-only POST 保持 _ 区现值（绝不悄悄重置）', () => {
+  const { dir, unified } = freshIo()
+  try {
+    const io = { env: { DSH_HOME: dir }, path: unified }
+    const p1 = parseSettingsBody('{"_scheduling":{"enabled":["agy"],"priority":["agy","mimo","codebuddy"]}}', io)
+    writeSettingsFile(p1.value, io)
+    const p2 = parseSettingsBody('{"agy":{}}', io)
+    assert.equal(p2.ok, true)
+    assert.deepEqual(p2.value._scheduling.enabled, ['agy'], 'kept across provider-only submit')
+    assert.deepEqual(p2.value._scheduling.priority, ['agy', 'mimo', 'codebuddy'])
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('scheduling: 写盘 → 读回闭环；enabled 显式空数组=全关被尊重', () => {
+  const { dir, unified } = freshIo()
+  try {
+    const io = { env: { DSH_HOME: dir }, path: unified }
+    const p = parseSettingsBody('{"_scheduling":{"enabled":[]}}', io)
+    assert.equal(p.ok, true)
+    writeSettingsFile(p.value, io)
+    const snap = readSettingsFile(io)
+    assert.deepEqual(snap._scheduling.enabled, [], 'explicit all-off survives round-trip')
+    const v = settingsView(io)
+    assert.deepEqual(v.scheduling.enabled, [])
+    assert.deepEqual(v.scheduling.order, [])
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })

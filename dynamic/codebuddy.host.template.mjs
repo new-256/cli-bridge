@@ -20,10 +20,13 @@
 //    无 fs（descriptor 的 dsh-store 通道缺席）→ preflight 确定性 abort 给提示即可。
 /*__KIT__*/
 /*__PROVIDER__*/
+/*__SCHED__*/
 
 return {
   inject: ['tools', 'subprocess', 'systemPrompt', 'timer'],
   apply(ctx) {
+    // 调度门禁（0.2.0）：设置面板关掉 codebuddy → 本形态不注册工具/政策段；fail-open。
+    if (!isBridgeEnabled('codebuddy', SCHED_ALL_IDS)) return
     const subprocess = ctx.subprocess
     const planMode = ctx.get('planMode')
     const sandboxPolicy = ctx.get('sandboxPolicy')

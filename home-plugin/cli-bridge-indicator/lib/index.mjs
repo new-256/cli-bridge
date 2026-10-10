@@ -26,7 +26,7 @@ import { existsSync, readFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { PROVIDER_IDS, createProvider } from '../../../providers/registry.mjs'
 import { MCP_BRIDGE_STALE_MS, normalizeMcpBridge, projectName } from '../../../core/bridge-kit.mjs'
-import { settingsView, parseSettingsBody, readSettingsFile, writeSettingsFile, SETTINGS_FILE_NAME } from './settings.mjs'
+import { settingsView, parseSettingsBody, readSettingsFile, writeSettingsFile, SETTINGS_FILE_NAME, effectiveSettings, schedulingOf } from './settings.mjs'
 import { declareBridgePresets } from './preset-declarations.mjs'
 
 export const PRESET_TTL_MS = 75000
@@ -343,7 +343,18 @@ export function apply(ctx) {
       if (!ws || typeof ws.register !== 'function') return
       webCtx.effect(() => ws.register({
         kind: 'exact', path: '/cli-bridge/status',
-        handler: async (req, res) => jsonRes(res, 200, st.snapshot())
+        handler: async (req, res) => {
+          const out = st.snapshot()
+          // 调度快照（每次轮询现读文件 → 改完即见，无需重启灯）；失败不影响状态本体。
+          try {
+            const snap = effectiveSettings({ env: process.env })
+            const sched = schedulingOf(snap, { env: process.env })
+            const labels = Object.create(null)
+            for (const id of PROVIDER_IDS) labels[id] = (descriptors[id] && descriptors[id].label) || id
+            out.scheduling = { enabled: sched.enabled, priority: sched.priority, order: sched.order, all: PROVIDER_IDS.slice(), labels }
+          } catch (e) { }
+          jsonRes(res, 200, out)
+        }
       }, 'cli-bridge: status route'))
       for (const id of st.ids) {
         webCtx.effect(() => ws.register({

@@ -8,6 +8,11 @@ import { fileURLToPath } from 'node:url'
 import { name as bridgeName, inject, apply } from '../../preset/agy-first/cli-bridge.mjs'
 
 const FIX = (f) => fileURLToPath(new URL('./fixtures/' + f, import.meta.url))
+// 调度门禁（0.2.0）在 apply() 里现读统一设置文件：本文件顶层把它钉到不存在路径
+// （node --test 每文件独立进程，无需 restore）。否则本机真实 DSH_HOME 里用户一旦
+// 关掉 agy，下面每个用例都会静默变「零注册」而误红 —— mimo/codebuddy 侧同款纪律。
+process.env.CLI_BRIDGE_SETTINGS_FILE = fileURLToPath(new URL('./fixtures/__no_such_settings__.json', import.meta.url))
+delete process.env.CLI_BRIDGE_PROVIDER
 const AGY_NDJSON = [
   '{"event":"step_update","step_update":{"step_type":"tool","step_index":0,"state":"ACTIVE","tool_name":"read","tool_info":{"name":"read","parameters":{"file_path":"a.txt"}}}}',
   '{"event":"result","result":{"status":"SUCCESS","response":"done","conversation_id":"conv-fake-1","duration_seconds":1.5,"num_turns":2,"usage":{"total_tokens":123}}}'

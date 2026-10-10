@@ -14,6 +14,8 @@ import path from 'node:path'
 
 import defineProvider from '../../providers/mimo.mjs'
 import { renderResult, renderStatus } from '../../core/bridge-kit.mjs'
+import { isBridgeEnabled } from '../../core/scheduling.mjs'
+import { PROVIDER_IDS } from '../../providers/registry.mjs'
 
 export const name = 'cli-bridge-mimo'
 export const inject = ['tools', 'subprocess', 'systemPrompt', 'timer']
@@ -59,6 +61,8 @@ function mimoExeFromEnvCandidates(env) {
 }
 
 export function apply(ctx, config) {
+  // 调度门禁（0.2.0）：用户关掉 mimo → 本形态不注册工具/政策段/心跳；fail-open。
+  if (!isBridgeEnabled('mimo', PROVIDER_IDS)) return
   const subprocess = ctx.subprocess
   const planMode = ctx.get('planMode')
   const sandboxPolicy = ctx.get('sandboxPolicy')
