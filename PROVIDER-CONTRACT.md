@@ -133,6 +133,28 @@ meta(env) → {
 
 diagnose(settings, env) 返回一行文本（卡片底部「诊断」区）；无诊断给 ''。
 
+### 3.1 调度区（顶层 `_scheduling`，非 provider 分区 —— 新增 provider 零改动接入）
+
+`{DSH_HOME}/cli-bridge-settings.json` 顶层另有 `_scheduling` 区（下划线前缀 = 非 provider
+命名空间，逐分区读取的旧代码天然忽略）：
+
+```
+"_scheduling": { "enabled": string[], "priority": string[] }
+```
+
+- `enabled` = 启用集合（集合语义，数组顺序无意义）；`priority` = 调用优先级，**数组顺序即优先级**；
+- 生效序 `order = priority ∩ enabled`；缺省 / 文件缺失 / 值坏 → 全量启用（fail-open：读配置
+  失败绝不等于关桥）；显式 `enabled: []` = 全关（被尊重）；非空但全部未知 → 回落全开；
+- 单源逻辑 `core/scheduling.mjs`（`normalizeScheduling / resolveScheduling / isBridgeEnabled /
+  describeScheduling`），宿主形态用 `ignorePin`（全局 env `CLI_BRIDGE_PROVIDER` 只是 MCP 进程
+  启动参数，不得反噬用户会话里的桥）；钉住仅对 MCP 进程最高优先；
+- **provider 作者不需要为此写任何代码**：注册表 `providers/registry.mjs` 的 `PROVIDER_IDS` 是
+  唯一 id 轴 —— 新 id 进注册表后，面板调度卡（labels 取 `descriptor.label`、all 取视图
+  `scheduling.all`）、四形态门禁（preset/dynamic `isBridgeEnabled(id, PROVIDER_IDS)`、MCP
+  `selectedProviders`、status 视图）自动纳入；preset/dynamic 模板/声明一律以 ids 数组传参，
+  禁止新增硬编码 id 列表（keystone 测试 `tests/core/scheduling.test.mjs` +
+  `tests/keystone/scheduling-gate.test.mjs` 锁语义）。
+
 ## 4. MCP 形态（`mcp/providers/<id>.mjs`）
 
 统一 stdio JSON-RPC 服务器 `mcp/cli-bridge-mcp.mjs`（keystone）聚合三家工具。每个 provider 导出：

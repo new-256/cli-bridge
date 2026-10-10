@@ -20,9 +20,12 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
+import { PROVIDER_IDS } from '../providers/registry.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const ids = ['agy', 'codebuddy', 'mimo']
+// 单一 id 轴：新 provider 只改 registry（PROVIDER-CONTRACT.md §3.1），build 派生
+// 物（dynamic 宿主 / SCHED_ALL_IDS 内联 / legacy YAML / plugin-list）自动跟上。
+const ids = PROVIDER_IDS
 const PKG = '@luchenglong/cli-bridge'
 
 const MODE = process.argv.includes('--check') ? 'check' : 'write'

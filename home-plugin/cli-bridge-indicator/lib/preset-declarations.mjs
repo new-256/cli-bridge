@@ -19,6 +19,7 @@ import { dirname, join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolveScheduling } from '../../../core/scheduling.mjs'
+import { PROVIDER_IDS } from '../../../providers/registry.mjs'
 
 export const PKG_NAME = '@luchenglong/cli-bridge'
 
@@ -129,4 +130,8 @@ export function declareBridgePresets(ctx, opts) {
   return out
 }
 
-export const PROVIDER_IDS_FALLBACK = ['agy', 'codebuddy', 'mimo']
+// 单一 id 轴 = registry.PROVIDER_IDS（PROVIDER-CONTRACT.md §3.1）：新 provider 进注册表，
+// preset 声明自动跟上；本模块与 settings.mjs 同 realm（host 半启动时已把 registry 加载进
+// 进程），导入 registry 不引入新依赖面。导出名保留 FALLBACK 供旧引用兼容。
+export const PROVIDER_IDS_FALLBACK = PROVIDER_IDS.slice()
+
