@@ -22,6 +22,16 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 ### Fixed
 - React hook 顺序红线：tab 状态声明置于 `if (!view)` 早期 return 之前（否则 view 加载
   瞬间 hook 数量变化 → 面板崩溃），`client-ui-surface` 静态锁。
+- **首发 npm 的 scoped 包可见性**：`package.json` 补 `publishConfig.access = "public"`。
+  此前只有 RELEASE-SOP 要求命令行 `npm publish --access public`；走 GUI/插件通道发布时不带该
+  参数，npm 按私有包处理 → `E402 Payment Required`。写入 package.json 后任何发布通道都正确。
+
+### 发布（2026-10-14）
+- **首发 npm**：`@luchenglong/cli-bridge@0.2.2`（统一包首次发布；registry 上 `latest=0.2.2`，
+  shasum `362d506e`，58 files / 320.1 kB）。npm 首次创建 scoped 包返回 `PUT 202 Accepted`
+  （"may take a few minutes to become available"）—— 属正常，勿重复发布。
+- **旧包已 deprecated**（三条均已在 registry 生效，显示迁移提示）：`agy-first-bridge`（终版 1.7.1）、
+  `codebuddy-first-bridge`（终版 1.6.2）、`mimo-first-bridge`（终版 1.2.9）。
 
 ## [0.2.1] - 2026-10-10
 

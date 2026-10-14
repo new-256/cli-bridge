@@ -5,8 +5,11 @@
 
 ## 0. 铁律（违反任何一条都不要发布）
 
-1. **npm publish 必须带 `--access public`**：包是 `@luchenglong` scope，scoped 包默认
-   restricted，漏了直接 402/私有可见性事故。
+1. **scoped 包可见性 = `package.json` 的 `publishConfig.access = "public"`**：包是
+   `@luchenglong` scope，scoped 包默认 restricted。**权威开关必须写在 package.json 里**
+   （0.2.2 首发踩坑：SOP 只要求命令行 `--access public`，但走 GUI/插件通道发布时不带该
+   参数 → npm 按私有包处理 → `E402 Payment Required`）。命令行仍建议显式带
+   `--access public` 双保险，漏了也不会再翻车。
 2. **client 注册 id === 包名**（`@luchenglong/cli-bridge`，红线 4）。`scripts/verify.mjs`
    与 `tests/keystone/client-id.test.mjs` 双重机器闸门。改包名必须同改 client.js 的
    `__ModuleLoader__.load({ id })`，否则 client combo 加载失败 → DSH 启动致命屏（agy
