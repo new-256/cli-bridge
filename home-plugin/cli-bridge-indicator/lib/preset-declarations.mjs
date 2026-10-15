@@ -25,7 +25,7 @@ export const PKG_NAME = '@luchenglong/cli-bridge'
 
 // preset 目录名映射（与 scripts/build.mjs 的 PRESET_DIRS 一致；目录名带 -first 后缀是
 // 三个旧包时代的遗留布局，provider id 不带 —— 这里不映射就永远找不到 plugin-list）。
-const PRESET_DIRS = { agy: 'agy-first', codebuddy: 'codebuddy-first', mimo: 'mimo-first' }
+const PRESET_DIRS = { agy: 'agy-first', codebuddy: 'codebuddy-first', mimo: 'mimo-first', opencode: 'opencode-first' }
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..', '..', '..')

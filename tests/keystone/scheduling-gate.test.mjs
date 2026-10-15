@@ -15,10 +15,16 @@ import { tmpdir } from 'node:os'
 import { apply as applyAgy } from '../../preset/agy-first/cli-bridge.mjs'
 import { apply as applyCodebuddy } from '../../preset/codebuddy-first/cli-bridge.mjs'
 import { apply as applyMimo } from '../../preset/mimo-first/cli-bridge.mjs'
+import { apply as applyOpencode } from '../../preset/opencode-first/cli-bridge.mjs'
 import { declareBridgePresets } from '../../home-plugin/cli-bridge-indicator/lib/preset-declarations.mjs'
+import { PROVIDER_IDS, providerMeta } from '../../providers/registry.mjs'
 
-const IDS = ['agy', 'codebuddy', 'mimo']
-const SELF = { agy: applyAgy, codebuddy: applyCodebuddy, mimo: applyMimo }
+// 单一 id 轴（契约 §3.1）：id 清单与 apply 映射都从注册表派生，禁止硬编码三家。
+const IDS = PROVIDER_IDS.slice()
+const SELF = { agy: applyAgy, codebuddy: applyCodebuddy, mimo: applyMimo, opencode: applyOpencode }
+/** provider id → preset id（从描述符派生，避免第二处硬编码）。 */
+const PRESET_OF = Object.create(null)
+for (const id of IDS) PRESET_OF[id] = providerMeta(id).presetId
 
 function mkCtx() {
   const registered = [], sections = [], events = [], timers = []
@@ -171,7 +177,7 @@ function captureOrder(io) {
   return { seen, out, flush: () => new Promise((r) => setTimeout(r, 50)) }
 }
 
-test('declareBridgePresets：缺省 = 注册表顺序注册三个 preset', async () => {
+test('declareBridgePresets：缺省 = 注册表顺序注册全部 preset', async () => {
   const prevFile = process.env.CLI_BRIDGE_SETTINGS_FILE
   const prevPin = process.env.CLI_BRIDGE_PROVIDER
   process.env.CLI_BRIDGE_SETTINGS_FILE = join(tmpdir(), 'clbgate-none-' + process.pid + '.json')
@@ -180,7 +186,8 @@ test('declareBridgePresets：缺省 = 注册表顺序注册三个 preset', async
     const c = captureOrder({ env: process.env, readFileSync: () => { throw new Error('ENOENT') }, path: null })
     await c.flush()
     const ids = c.seen.filter((x) => typeof x === 'string').map((x) => x)
-    assert.deepEqual(ids, ['cordis-agy', 'codebuddy-first', 'cordis-mimo'], 'all three registered in registry order')
+    // 期望 = 注册表顺序的 preset id 序列（从描述符派生，新增 provider 零改动）。
+    assert.deepEqual(ids, IDS.map((id) => PRESET_OF[id]), 'all providers registered in registry order')
   } finally {
     if (prevFile === undefined) delete process.env.CLI_BRIDGE_SETTINGS_FILE; else process.env.CLI_BRIDGE_SETTINGS_FILE = prevFile
     if (prevPin === undefined) delete process.env.CLI_BRIDGE_PROVIDER; else process.env.CLI_BRIDGE_PROVIDER = prevPin
@@ -200,9 +207,10 @@ test('declareBridgePresets：priority 决定注册顺序，禁用面仍注册（
   }
   await c.flush()
   const ids = c.seen.filter((x) => typeof x === 'string')
-  assert.equal(ids.length, 3, 'still three presets registered')
-  assert.equal(ids[0], 'codebuddy-first', 'highest-priority provider registered first')
-  assert.deepEqual(ids, ['codebuddy-first', 'cordis-mimo', 'cordis-agy'], 'order = priority, disabled kept at tail')
+  assert.equal(ids.length, IDS.length, 'all presets still registered')
+  assert.equal(ids[0], PRESET_OF.codebuddy, 'highest-priority provider registered first')
+  // 前三位 = priority 顺序；未列入 priority 的（本例 opencode）按注册表序补在末尾。
+  assert.deepEqual(ids.slice(0, 3), ['codebuddy', 'mimo', 'agy'].map((id) => PRESET_OF[id]), 'order = priority, disabled kept at tail')
 })
 
 test('declareBridgePresets：opts.ids 显式传入 = 跳过调度（测试/手工可控）', async () => {
@@ -221,11 +229,11 @@ test('declareBridgePresets：opts.ids 显式传入 = 跳过调度（测试/手�
         return () => { }
       }
     }
-    return declareBridgePresets(ctx, { ids: ['agy', 'codebuddy', 'mimo'] }), seen
+    return declareBridgePresets(ctx, { ids: IDS }), seen
   })
   const seen = c
   await new Promise((r) => setTimeout(r, 50))
-  assert.equal(seen.filter((x) => typeof x === 'string').length, 3, 'explicit ids ignore the all-disabled file')
+  assert.equal(seen.filter((x) => typeof x === 'string').length, IDS.length, 'explicit ids ignore the all-disabled file')
 })
 
 test('declareBridgePresets：ctx 无 inject（旧宿主/非组合根）→ 返回空表不抛', () => {

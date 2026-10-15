@@ -10,6 +10,8 @@ import { readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { PROVIDER_IDS } from '../../providers/registry.mjs'
+
 const TMP = join(fileURLToPath(new URL('.', import.meta.url)), '..', '.tmp-indicator-routes')
 mkdirSync(TMP, { recursive: true })
 const S = join(TMP, 'settings.json')
@@ -75,7 +77,8 @@ test('routes: apply() 注册四路由', async () => {
     assert.ok(routes.has('/cli-bridge/status'), 'status 路由')
     assert.ok(routes.has('/cli-bridge/settings'), 'settings 路由')
     assert.ok(routes.has('/agy-indicator/quota'), 'quota 路由')
-    for (const id of ['agy', 'codebuddy', 'mimo']) assert.ok(routes.has('/' + id + '-indicator/status'), '旧路由 ' + id)
+    // 旧路由按注册表派生（契约 §3.1：单一 id 轴，禁止硬编码三家）。
+    for (const id of PROVIDER_IDS) assert.ok(routes.has('/' + id + '-indicator/status'), '旧路由 ' + id)
   } finally { restore() }
 })
 
@@ -89,7 +92,7 @@ test('routes: GET settings 视图含 scheduling（默认全开）', async () => 
     await routes.get('/cli-bridge/settings').handler({ method: 'GET' }, r)
     assert.equal(r.code, 200)
     const j = JSON.parse(r.body)
-    assert.ok(j.scheduling && j.scheduling.enabled.length === 3 && j.scheduling.order.length === 3, '缺省全开视图')
+    assert.ok(j.scheduling && j.scheduling.enabled.length === PROVIDER_IDS.length && j.scheduling.order.length === PROVIDER_IDS.length, '缺省全开视图')
     assert.ok(j.scheduling.labels.agy, 'labels 齐')
   } finally { restore() }
 })
@@ -116,7 +119,7 @@ test('routes: POST _scheduling → 落盘 → status 输出即时反映（②面
     const sj = JSON.parse(s.body)
     assert.ok(sj.scheduling, 'status 附 scheduling')
     assert.equal(sj.scheduling.order.join(','), 'codebuddy,agy', 'order=priority∩enabled')
-    assert.ok(sj.scheduling.all.length === 3 && sj.scheduling.labels.mimo)
+    assert.ok(sj.scheduling.all.length === PROVIDER_IDS.length && sj.scheduling.labels.mimo)
     // 非法 POST 走 400
     const bad = res()
     await routes.get('/cli-bridge/settings').handler(postReq(JSON.stringify({ _scheduling: { enabled: 'nope' } })), bad)
@@ -142,6 +145,6 @@ test('routes: status 路由本体在 scheduling 读取失败时仍 200（不影�
     await routes.get('/cli-bridge/status').handler({ method: 'GET' }, s)
     assert.equal(s.code, 200)
     const sj = JSON.parse(s.body)
-    assert.ok(sj.scheduling && sj.scheduling.enabled.length === 3, '坏文件 = 缺省全开')
+    assert.ok(sj.scheduling && sj.scheduling.enabled.length === PROVIDER_IDS.length, '坏文件 = 缺省全开')
   } finally { restore(); try { rmSync(TMP, { recursive: true, force: true }) } catch (e) { } }
 })

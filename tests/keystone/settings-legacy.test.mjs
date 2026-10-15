@@ -11,7 +11,7 @@ import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { settingsView, parseSettingsBody, writeSettingsFile, readSettingsFile, effectiveSettings } from '../../home-plugin/cli-bridge-indicator/lib/settings.mjs'
-import { createProvider } from '../../providers/registry.mjs'
+import { createProvider, PROVIDER_IDS } from '../../providers/registry.mjs'
 
 function freshIo() {
   const dir = join(tmpdir(), 'clb-set-' + Date.now() + '-' + Math.floor(Math.random() * 1e6))
@@ -102,12 +102,14 @@ test('legacy migration: mimo backend/desktopModel key mapping', { skip: (() => {
 })
 
 // ── _scheduling 区（0.2.0）：读写、视图、校验、保持语义 ──────────────────────
+// 单一 id 轴（契约 §3.1）：期望值一律从 registry 派生，禁止硬编码 id 列表 —— 新增
+// provider 时本文件零改动，否则每次扩 provider 都要改测试（= 第二处 id 真相源）。
 test('scheduling: 文件无 _ 区 → 视图缺省全开（all/labels 恒有）', () => {
   const { io } = freshIo()
   const v = settingsView(io)
-  assert.deepEqual(v.scheduling.enabled, ['agy', 'codebuddy', 'mimo'])
-  assert.deepEqual(v.scheduling.order, ['agy', 'codebuddy', 'mimo'])
-  assert.deepEqual(v.scheduling.all, ['agy', 'codebuddy', 'mimo'])
+  assert.deepEqual(v.scheduling.enabled, PROVIDER_IDS.slice())
+  assert.deepEqual(v.scheduling.order, PROVIDER_IDS.slice())
+  assert.deepEqual(v.scheduling.all, PROVIDER_IDS.slice())
   assert.equal(v.scheduling.labels.agy, 'AGY')
 })
 
@@ -147,7 +149,8 @@ test('scheduling: provider-only POST 保持 _ 区现值（绝不悄悄重置）'
     const p2 = parseSettingsBody('{"agy":{}}', io)
     assert.equal(p2.ok, true)
     assert.deepEqual(p2.value._scheduling.enabled, ['agy'], 'kept across provider-only submit')
-    assert.deepEqual(p2.value._scheduling.priority, ['agy', 'mimo', 'codebuddy'])
+    // priority 被 normalize 补齐了注册表里的全部 id（漏写的排末尾），故按前缀比对。
+    assert.deepEqual(p2.value._scheduling.priority.slice(0, 3), ['agy', 'mimo', 'codebuddy'])
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 

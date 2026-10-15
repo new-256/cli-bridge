@@ -82,7 +82,7 @@ if (!patchRel || !existsSync(join(ROOT, String(patchRel).replace(/^\.\//, ''))))
 
 // 7. 生成物存在（dynamic host / agent yml 至少 plugin-list 在；fresh clone 需先 build）
 for (const id of PROVIDER_IDS) {
-  if (!read('preset/' + ({ agy: 'agy-first', codebuddy: 'codebuddy-first', mimo: 'mimo-first' })[id] + '/plugin-list.mjs')) errors.push('preset/' + id + ' plugin-list.mjs missing')
+  if (!read('preset/' + ({ agy: 'agy-first', codebuddy: 'codebuddy-first', mimo: 'mimo-first', opencode: 'opencode-first' })[id] + '/plugin-list.mjs')) errors.push('preset/' + id + ' plugin-list.mjs missing')
 }
 
 // 8. 版本双锁：mcp server const + CHANGELOG 顶部条目 === package.json version

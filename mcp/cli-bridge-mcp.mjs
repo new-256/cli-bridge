@@ -28,12 +28,13 @@ import { resolveScheduling } from '../core/scheduling.mjs'
 import * as agyMcp from './providers/agy.mjs'
 import * as codebuddyMcp from './providers/codebuddy.mjs'
 import * as mimoMcp from './providers/mimo.mjs'
+import * as opencodeMcp from './providers/opencode.mjs'
 
 const SERVER_NAME = 'cli-bridge-mcp'
-const SERVER_VERSION = '0.2.2'
+const SERVER_VERSION = '0.2.3'
 const PROTOCOL = '2024-11-05'
 
-const PROVIDERS = [agyMcp, codebuddyMcp, mimoMcp]
+const PROVIDERS = [agyMcp, codebuddyMcp, mimoMcp, opencodeMcp]
 
 function detectHomeDir() {
   if (process.env.DSH_HOME) return process.env.DSH_HOME

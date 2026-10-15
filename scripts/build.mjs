@@ -195,7 +195,7 @@ function yamlInlineObject(obj, indent) {
   return lines.join('\n')
 }
 
-const PRESET_DIRS = { agy: 'agy-first', codebuddy: 'codebuddy-first', mimo: 'mimo-first' }
+const PRESET_DIRS = { agy: 'agy-first', codebuddy: 'codebuddy-first', mimo: 'mimo-first', opencode: 'opencode-first' }
 
 async function loadPluginList(id) {
   const rel = 'preset/' + PRESET_DIRS[id] + '/plugin-list.mjs'

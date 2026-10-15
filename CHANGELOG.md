@@ -9,6 +9,39 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 > - CodeBuddy 线：[docs/history/codebuddy/CHANGELOG.md](docs/history/codebuddy/CHANGELOG.md)（终版 1.6.2）
 > - MiMo 线：[docs/history/mimo/CHANGELOG.md](docs/history/mimo/CHANGELOG.md)（终版 1.2.9）
 
+## [0.2.3] - 2026-10-15
+
+### Added
+- **第四个 provider：OpenCode**（`opencode`）。四形态全量交付：描述符
+  `providers/opencode.mjs`、preset `opencode-first`、`dynamic/opencode.host.js`、
+  MCP 面 `mcp/providers/opencode.mjs`。工具面 = `opencode_run` /
+  `opencode_continue` / `opencode_status` + **opencode_models**（列出本机可用模型）。
+- **opencode_models**：执行 `opencode models` 取模型列表，支持 `freeOnly` /
+  `provider` 过滤；**免费模型优先排序**（`-free` 后缀）。CLI 缺失/未登录时明确
+  返回 `ok:false` 与可操作错误，**绝不凭空伪造模型列表**。
+- **设置面板可选「用哪个 opencode」与「默认模型」**：三个字段均为可自定义下拉 ——
+  `binPath`（下拉列出实测探测到的候选路径）、`defaultModel`（实时调
+  `opencode models` 填充）、`defaultAgent`（build / plan）。
+
+### Changed
+- **exe 解析优先级统一**：env `OPENCODE_BIN`/`OPENCODE_CLI` > 桌面版 V2 已知路径
+  （`ai.opencode.desktop/cli/<ver>-<arch>/`，版本按 semver 降序）> PATH 查找
+  `opencode-cli`。二进制名是 **`opencode-cli`**（V2 桌面版），不做 `opencode.exe`
+  兜底 —— V1/V2 不能并存安装，兜底会误命中另一个版本。
+- 单一 id 轴（契约 §3.1）落到测试：keystone 四个测试文件原先硬编码三家 id 列表，
+  改为全部从 `PROVIDER_IDS` / `providerMeta()` 派生 —— 以后新增 provider 零改动。
+
+### Fixed
+- **opencode 事件解析的两个真实缺陷**（端到端测试捕获，单元测试当时全绿）：
+  ① 文本在 `part.text` 而非顶层，原实现取 `parsed.text` 恒为 undefined → 响应体为空；
+  ② 正文（`text` 事件）与统计（`step_finish` 事件的 `cost`/`tokens`）在**不同**事件里，
+  且原实现倒序遍历会在读到 `text` 前先命中末尾的 `step_finish` 并返回 → 回填恒空，
+  表现为「成功但正文为空」。改为**正向**扫完全流再决策，命中终态事件时回填末段文本。
+- 更正 opencode CLI 事实（按本机实测 v2.0.29 而非文档推断）：**不存在 `result` 事件**
+  （终止判据是退出码 0/1/130）、`run` 子命令**无 `--prompt`**（`-p` 是 `--password`）、
+  V2 **无 `--variant`**（并入 `--model provider/model#variant`）、V2 **无 `--dir`**
+  （cwd 靠 spawn 工作目录）。
+
 ## [0.2.2] - 2026-10-10
 
 ### Changed

@@ -2,6 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createIndicatorState, PRESET_TTL_MS } from '../../home-plugin/cli-bridge-indicator/lib/index.mjs'
+import { PROVIDER_IDS } from '../../providers/registry.mjs'
 
 function makeState(opts) {
   let nowMs = 1000
@@ -38,7 +39,8 @@ test('unknown provider id is ignored, not fatal', () => {
   const { st } = makeState()
   st.mergeSnapshot('nope', { projects: [{ cwd: 'C:/x' }] })
   st.onMode('nope', { active: true })
-  assert.deepEqual(Object.keys(st.snapshot().providers).sort(), ['agy', 'codebuddy', 'mimo'])
+  // 单一 id 轴（契约 §3.1）：桶清单从注册表派生，禁止硬编码三家。
+  assert.deepEqual(Object.keys(st.snapshot().providers).sort(), PROVIDER_IDS.slice().sort())
 })
 
 test('mode lease: global fallback when client cannot judge', () => {
