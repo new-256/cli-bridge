@@ -1,0 +1,86 @@
+{
+  "name": "@luchenglong/cli-bridge",
+  "version": "0.2.2",
+  "description": "CLI Bridge for DeepSeek Harness (DSH): one package bridging three local coding-CLI agents — agy (Google Antigravity CLI), Tencent CodeBuddy Code, and Xiaomi MiMo (MiMoCode / MiMo Desktop). Each provider keeps its own agent preset (cordis-agy / codebuddy-first / cordis-mimo), tools (agy_run / codebuddy_run / mimo_run + continue + status), rate-limit/network fallback dialog, and zero-dependency MCP server, unified under a single home-level status light, one settings file, and one bundle patch. Merges agy-first-bridge, codebuddy-first-bridge and mimo-first-bridge.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18",
+    "dsh": ">=0.1.1-rc.2 <0.3.0-0"
+  },
+  "main": "./home-plugin/cli-bridge-indicator/lib/index.mjs",
+  "exports": {
+    ".": "./home-plugin/cli-bridge-indicator/lib/index.mjs",
+    "./client": "./home-plugin/cli-bridge-indicator/lib/client.js",
+    "./bridge-kit": "./core/bridge-kit.mjs",
+    "./registry": "./providers/registry.mjs",
+    "./providers/agy": "./providers/agy.mjs",
+    "./providers/codebuddy": "./providers/codebuddy.mjs",
+    "./providers/mimo": "./providers/mimo.mjs",
+    "./preset-agy": "./preset/agy-first/cli-bridge.mjs",
+    "./preset-codebuddy": "./preset/codebuddy-first/cli-bridge.mjs",
+    "./preset-mimo": "./preset/mimo-first/cli-bridge.mjs",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./home-plugin/cli-bridge-indicator/cordis.patch.yml"
+    }
+  },
+  "bin": {
+    "cli-bridge-mcp": "mcp/cli-bridge-mcp.mjs",
+    "agy-mcp-server": "mcp/agy-mcp-server.mjs",
+    "codebuddy-mcp-server": "mcp/codebuddy-mcp-server.mjs",
+    "mimo-mcp-server": "mcp/mimo-mcp-server.mjs"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node scripts/build.mjs --check && node --test",
+    "verify": "node scripts/verify.mjs",
+    "check": "node scripts/build.mjs --check && node scripts/verify.mjs && node --test && node mcp/cli-bridge-mcp.mjs --check",
+    "prepack": "node scripts/verify.mjs && node scripts/build.mjs --check",
+    "deploy:local": "node scripts/deploy.mjs"
+  },
+  "files": [
+    "core/",
+    "providers/",
+    "preset/",
+    "home-plugin/",
+    "dynamic/",
+    "mcp/",
+    "bin/",
+    "scripts/",
+    "docs/",
+    "assets/",
+    "locale/",
+    "CHANGELOG.md",
+    "MCP-POLICY.md",
+    "PROVIDER-CONTRACT.md",
+    "README.md",
+    "README.en.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "cordis",
+    "cli-bridge",
+    "agy",
+    "codebuddy",
+    "mimo",
+    "mcp",
+    "mcp-server",
+    "agent",
+    "deepseek-harness"
+  ],
+  "author": "chenglong",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/new-256/cli-bridge.git"
+  },
+  "homepage": "https://github.com/new-256/cli-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/new-256/cli-bridge/issues"
+  }
+}
