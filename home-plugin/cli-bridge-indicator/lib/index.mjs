@@ -30,7 +30,17 @@ import { settingsView, parseSettingsBody, readSettingsFile, writeSettingsFile, S
 import { declareBridgePresets } from './preset-declarations.mjs'
 
 export const PRESET_TTL_MS = 75000
+/** 运行中/仍在活动的项目的新鲜期（防抖：短暂停顿不该让灯闪）。 */
 export const PROJECT_TTL_MS = 10 * 60 * 1000
+/**
+ * 已完成（running=0 且已有 lastStatus）项目的新鲜期。
+ *
+ * 0.2.1 用单一 10 分钟 TTL 修「一次失败后灯永久挂着」—— 但 10 分钟对于「刚跑完、
+ * 想看到灯灭」来说太长：任务结束后灯要挂满 10 分钟才消失，用户感知是「灯不灭」。
+ * 区分两态：运行中（含短暂间隔）保持长 TTL 防抖；已收口的项目走短 TTL 快速淡出。
+ * 淡出只影响 pill 渲染（stale 项目仍在弹窗里作历史），不丢数据。
+ */
+export const PROJECT_DONE_TTL_MS = 60 * 1000
 export const MAX_PROJECTS = 24
 export const MAX_SESSIONS = 64
 
@@ -50,6 +60,11 @@ export function createIndicatorState(opts) {
   const now = typeof o.now === 'function' ? o.now : Date.now
   const ttlMs = o.ttlMs != null ? o.ttlMs : PRESET_TTL_MS
   const projectTtlMs = o.projectTtlMs != null ? o.projectTtlMs : PROJECT_TTL_MS
+  // doneTtlMs 缺省跟随 projectTtlMs（显式传 projectTtlMs 的测试/调用方同时支配两态，
+  // 否则「传短 TTL 却不生效」会静默坑人）；只有走生产默认值时才取更短的
+  // PROJECT_DONE_TTL_MS（已完成项目快速淡出）。
+  const doneTtlMs = o.doneTtlMs != null ? o.doneTtlMs
+    : (o.projectTtlMs != null ? projectTtlMs : PROJECT_DONE_TTL_MS)
   const staleMs = o.staleMs != null ? o.staleMs : MCP_BRIDGE_STALE_MS
   const ids = Array.isArray(o.ids) && o.ids.length ? o.ids.slice() : PROVIDER_IDS.slice()
   const listPresetSessions = typeof o.listPresetSessions === 'function' ? o.listPresetSessions : null
@@ -183,7 +198,11 @@ export function createIndicatorState(opts) {
     const isStale = (p) => {
       if (p.running > 0) return false
       const at = Number(p.updatedAt) || Number(p.lastAt) || 0
-      return !!at && (t - at) > projectTtlMs
+      if (!at) return false
+      // 已收口（有终态）的项目走短 TTL → 完成后快速淡出；
+      // 仍无终态的（长时间运行中的间隔、或从未跑完）保持长 TTL 防抖。
+      const ttl = p.lastStatus ? doneTtlMs : projectTtlMs
+      return (t - at) > ttl
     }
     // 顶层聚合只看新鲜（未 stale）项目：陈旧历史不再决定灯色（0.2.1 修复「指示灯长期
     // 存在」的服务端半边 —— 客户端半边在 pill 过滤；无新鲜项目时顶层回落 idle）。

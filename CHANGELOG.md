@@ -9,6 +9,23 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 > - CodeBuddy 线：[docs/history/codebuddy/CHANGELOG.md](docs/history/codebuddy/CHANGELOG.md)（终版 1.6.2）
 > - MiMo 线：[docs/history/mimo/CHANGELOG.md](docs/history/mimo/CHANGELOG.md)（终版 1.2.9）
 
+## [0.2.4] - 2026-10-16
+
+### Fixed
+- **任务完成后状态灯长时间不灭**：原先用单一 `PROJECT_TTL_MS`（10 分钟）判定项目
+  陈旧，导致跑完的任务要让灯挂满 10 分钟才消失，用户感知是「灯不灭」。改为区分两态：
+  **已收口**（`running=0` 且已有 `lastStatus`）走 `PROJECT_DONE_TTL_MS`（60 秒）快速
+  淡出；**未收口**（运行中/长时间无终态）仍走 10 分钟防抖，避免运行中闪灯。
+  淡出只影响 pill 渲染与顶层聚合 —— stale 项目仍保留在列表里作弹窗历史，不丢数据。
+- **MCP 工具面版本号与统一 server 不一致**：四个 provider 的 `meta.version` 与描述符
+  `mcp.version` 硬编码版本字面量（8 处），0.2.3 出现「server 报 0.2.3、provider 面报
+  0.2.2」。新增 `mcp/version.mjs` 从 package.json 读一次作为单一来源（读不到抛错，
+  绝不静默回落）；测试改为断言 semver 形态而非钉字面量，发布不再需要改测试。
+
+### Changed
+- `doneTtlMs` 缺省跟随显式传入的 `projectTtlMs`（仅生产默认值取更短的
+  `PROJECT_DONE_TTL_MS`）—— 否则「传了短 TTL 却不生效」会静默坑调用方。
+
 ## [0.2.3] - 2026-10-15
 
 ### Added

@@ -143,3 +143,49 @@ test('running project is never stale and still aggregates', () => {
   assert.equal(b.state, 'running')
 })
 
+// ── 完成后快速淡出（0.2.4）：已收口项目走更短的新鲜期 ──────────────────────────
+// 动机：单一 10 分钟 TTL 下，任务跑完灯要挂满 10 分钟才消失，用户感知是「灯不灭」。
+// 区分两态：有终态(lastStatus) → doneTtlMs；无终态 → projectTtlMs（防抖）。
+test('已收口项目按 doneTtlMs 淡出：短 TTL 内即 stale，未收口的仍按长 TTL 保留', () => {
+  // 长 TTL 5s、已收口 TTL 500ms：两者都不显式跟随 projectTtlMs。
+  const { st, tick } = makeState({ projectTtlMs: 5000, doneTtlMs: 500 })
+  st.mergeSnapshot('agy', { projects: [
+    { cwd: 'C:/done', running: 0, lastStatus: 'SUCCESS', updatedAt: 1000 },
+    { cwd: 'C:/pending', running: 0, updatedAt: 1000 }
+  ] })
+  tick(1000) // 越过 doneTtlMs(500)，未越 projectTtlMs(5000)
+  const b = st.bucketSnapshot('agy')
+  const done = b.projects.find((p) => p.cwd === 'C:/done')
+  const pending = b.projects.find((p) => p.cwd === 'C:/pending')
+  assert.equal(done.stale, true, '已完成项目应在短 TTL 后淡出')
+  assert.equal(pending.stale, false, '无终态项目仍按长 TTL 防抖，不该被提前判 stale')
+})
+
+test('doneTtlMs 缺省跟随显式传入的 projectTtlMs（传短 TTL 必须真的生效）', () => {
+  // 只传 projectTtlMs=1000：doneTtlMs 应同为 1000，而不是回落到生产的 60s 默认值
+  // （否则「传了短 TTL 却不生效」会静默坑人 —— 本改动第一版就踩了这个坑）。
+  const { st, tick } = makeState({ projectTtlMs: 1000 })
+  st.mergeSnapshot('agy', { projects: [{ cwd: 'C:/old', lastStatus: 'ERROR', updatedAt: 1000 }] })
+  tick(2000)
+  const b = st.bucketSnapshot('agy')
+  assert.equal(b.projects[0].stale, true, 'explicit projectTtlMs must also govern done projects')
+  assert.equal(b.state, 'idle')
+})
+
+test('生产默认值：已完成 TTL 短于运行中 TTL', async () => {
+  const mod = await import('../../home-plugin/cli-bridge-indicator/lib/index.mjs')
+  assert.ok(mod.PROJECT_DONE_TTL_MS < mod.PROJECT_TTL_MS, 'done TTL must be shorter than in-flight TTL')
+  // 60s 级：足够看到「刚跑完」的结果，又不至于让灯挂满 10 分钟。
+  assert.ok(mod.PROJECT_DONE_TTL_MS >= 30 * 1000 && mod.PROJECT_DONE_TTL_MS <= 2 * 60 * 1000)
+})
+
+test('淡出只影响聚合/渲染，项目仍在列表里（弹窗历史不丢）', () => {
+  const { st, tick } = makeState({ projectTtlMs: 1000 })
+  st.mergeSnapshot('mimo', { projects: [{ cwd: 'C:/done', running: 0, lastStatus: 'ACCEPTED', updatedAt: 1000 }] })
+  tick(5000)
+  const b = st.bucketSnapshot('mimo')
+  assert.equal(b.projects.length, 1, 'stale 项目保留在列表（弹窗历史）')
+  assert.equal(b.projects[0].stale, true)
+  assert.equal(b.state, 'idle', '但不再驱动顶层灯色')
+})
+
