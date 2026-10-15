@@ -67,7 +67,10 @@ function spawnLines(io) {
 function spawnCount(io) { return spawnLines(io).length }
 
 test('meta 契约形态', () => {
-  assert.deepEqual(meta, { id: 'codebuddy', label: 'CODEBUDDY', version: '0.2.2' })
+  assert.equal(meta.id, 'codebuddy')
+  assert.equal(meta.label, 'CODEBUDDY')
+  // 版本跟随本包（契约 §4）：不钉字面量，否则每次发布都要改测试。
+  assert.match(meta.version, /^\d+\.\d+\.\d+/, 'meta.version follows the package version')
 })
 
 test('tools(env) 三件套 + schema 合法 + check() 守卫通过', () => {

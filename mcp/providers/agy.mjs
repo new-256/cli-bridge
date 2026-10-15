@@ -18,8 +18,9 @@ import { fileURLToPath } from 'node:url'
 
 import defineProvider from '../../providers/agy.mjs'
 import { createStatusEngine, createLineStream, buildMcpBridgePayload, isLimited, renderStatus } from '../../core/bridge-kit.mjs'
+import { packageVersion } from '../version.mjs'
 
-export const meta = { id: 'agy', label: 'AGY', version: '0.2.2' }
+export const meta = { id: 'agy', label: 'AGY', version: packageVersion() }
 
 const QUOTA_SCRIPT_DEFAULT = fileURLToPath(new URL('../../bin/agy-quota.mjs', import.meta.url))
 

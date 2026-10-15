@@ -26,8 +26,9 @@ import {
   createStatusEngine, createLineStream, buildMcpBridgePayload,
   fallbackResult, shortLabel, renderStatus
 } from '../../core/bridge-kit.mjs'
+import { packageVersion } from '../version.mjs'
 
-export const meta = { id: 'mimo', label: 'MIMO', version: '0.2.2' }
+export const meta = { id: 'mimo', label: 'MIMO', version: packageVersion() }
 
 const BACKEND_DESKTOP = 'mimo-desktop'
 const SETTINGS_FILE_NAME = 'cli-bridge-settings.json'

@@ -24,8 +24,9 @@ import { resolve as resolvePath, join as nodePathJoin } from 'node:path'
 
 import defineProvider from '../../providers/codebuddy.mjs'
 import { createStatusEngine, createLineStream, buildMcpBridgePayload, mcpBridgeFileName } from '../../core/bridge-kit.mjs'
+import { packageVersion } from '../version.mjs'
 
-export const meta = { id: 'codebuddy', label: 'CODEBUDDY', version: '0.2.2' }
+export const meta = { id: 'codebuddy', label: 'CODEBUDDY', version: packageVersion() }
 
 const provider = defineProvider({
   env: process.env,

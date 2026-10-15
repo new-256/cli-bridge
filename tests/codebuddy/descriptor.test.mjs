@@ -24,7 +24,9 @@ test('契约 ★ 字段齐备（PROVIDER-CONTRACT.md §1）', () => {
   assert.equal(p.exeName, 'codebuddy')
   assert.deepEqual(p.binEnvVars, ['CODEBUDDY_BIN', 'CODEBUDDY_EN_BIN', 'WORKBUDDY_BIN'])
   assert.equal(p.unavailableStatus, 'CODEBUDDY_UNAVAILABLE')
-  assert.equal(p.mcp.version, '0.2.2')
+  // 版本跟随本包（契约 §4）：不钉字面量（每次发布都要改测试 = 重复真相源），
+  // 只锁「非空且是合法 semver」。
+  assert.match(p.mcp.version, /^\d+\.\d+\.\d+/, 'mcp.version must be a semver following the package version')
   assert.deepEqual(p.extraTools, [])
   for (const f of ['backends', 'normalizeBackend', 'resolveBackend', 'buildArgv', 'parseJson', 'buildResult', 'foldStreamEvent', 'isLimited', 'isTransientCliError', 'failureHint', 'preflight', 'runToolLogic', 'continueToolLogic', 'statusToolLogic', 'attach', 'hostOptions']) {
     assert.equal(typeof p[f], 'function', f + ' must be a function')

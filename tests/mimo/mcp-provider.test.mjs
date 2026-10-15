@@ -36,7 +36,10 @@ async function withEnv(vars, fn) {
 }
 
 test('meta 契约形态', () => {
-  assert.deepEqual(meta, { id: 'mimo', label: 'MIMO', version: '0.2.2' })
+  assert.equal(meta.id, 'mimo')
+  assert.equal(meta.label, 'MIMO')
+  // 版本跟随本包（契约 §4）：不钉字面量，否则每次发布都要改测试。
+  assert.match(meta.version, /^\d+\.\d+\.\d+/, 'meta.version follows the package version')
 })
 
 test('tools(env) 覆盖描述符三件套 + mimo_settings，schema 合法，check() 通过', () => {

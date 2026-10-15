@@ -13,8 +13,9 @@ import { resolve as resolvePath } from 'node:path'
 
 import defineProvider, { resolveExePrefix } from '../../providers/opencode.mjs'
 import { createStatusEngine, createLineStream, buildMcpBridgePayload, isLimited, renderStatus } from '../../core/bridge-kit.mjs'
+import { packageVersion } from '../version.mjs'
 
-export const meta = { id: 'opencode', label: 'OPENCODE', version: '0.2.2' }
+export const meta = { id: 'opencode', label: 'OPENCODE', version: packageVersion() }
 
 const provider = defineProvider({
   env: process.env,
