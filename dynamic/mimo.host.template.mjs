@@ -3,7 +3,7 @@
 // 构建（node scripts/build.mjs --only=mimo）把 core/bridge-kit.mjs 与
 // providers/mimo.mjs 分别内联进下方两个占位标记行（各占一行、行内仅此标记），
 // 生成 dynamic/mimo.host.js。注意：标记字面量绝不能出现在本注释里 —— 构建做全局
-// 替换，注释中出现同样会被替换成正文代码而炸掉语法。
+// 替换，注释中出现同样也会被替换成正文代码而炸掉语法。
 // 沙箱纪律（旧仓 dynamic/host.js 头注 verbatim 精神）：
 //  - 禁 import/require、无 TypeScript；无 AbortController/process 裸引用/Buffer/原生
 //    定时器 —— process 只经 typeof 守卫探测；宿主能力全部来自注入的 harness.*/ctx。
@@ -12,14 +12,9 @@
 //  - 无 ctx.emit：状态经 ctx.get('cliBridgeCollector').mergeSnapshot('mimo', snap)
 //    推给家级灯（旧 mimoCollector 服务名在 keystone 里保留别名）；动态形态不宣告
 //    mode（旧语义：普通模式灯仅在调用 mimo 时临时显示）。
-//  - mimo-desktop 在沙箱的形态（契约 §9）：无 fs 发现 desktop-api.json，且多数沙箱
-//    无 fetch —— 描述符 preflight 直接 abort 为 DESKTOP_UNREACHABLE 并提示改用
-//    backend=mimocode（旧仓返回 DESKTOP_UNSUPPORTED 的替代；语义升级，Lead 定案）。
-//    宿主若注入了 globalThis.fetch 且给出 MIMO_DESKTOP_PORT/MIMO_DESKTOP_TOKEN env，
-//    委托 execute 仍可走通（fetch 路径全部 typeof 守卫）。
 //  - mimo_settings 在沙箱不持久化（无 nodeFs → 描述符回显语义；旧 dynamic echo 形态）。
-//  - exe 解析（旧动态候选无 existsSync 校验，盲取候选 [0] 易 spawn 失败）：升级走
-//    agy 模板同款链路 —— MIMO_BIN/MIMO_CLI env > subprocess.resolveExecutable(PATH)。
+//  - 单后端（本地 mimo CLI / MiMoCode）：exe 解析走 agy 模板同款链路 ——
+//    MIMO_BIN/MIMO_CLI env > 已知安装位置 > subprocess.resolveExecutable(PATH)。
 /*__KIT__*/
 /*__PROVIDER__*/
 /*__SCHED__*/
@@ -48,14 +43,16 @@ return {
       } catch (e) { /* 灯数据尽力而为 */ }
     }
 
-    // exe：MIMO_BIN/MIMO_CLI env > PATH 查找 mimo（subprocess.resolveExecutable）。
-    // mimo-desktop 后端不 spawn：返回占位字符串让 kit 直达 delegates→execute/preflight。
+    // exe：MIMO_BIN/MIMO_CLI env > 已知安装位置 > PATH 查找 mimo
+    // （subprocess.resolveExecutable）。与 descriptor 的 resolveMimoExePrefix 同一套
+    // 优先级；.js/.mjs 目标经 process.execPath 包装（供测试 fixture 使用）。
     async function resolveExe(backend, signal) {
-      if (backend === 'mimo-desktop') return 'mimo'
-      const bin = env.MIMO_BIN || env.MIMO_CLI || ''
-      if (bin) {
-        if (/\.(mjs|cjs|js)$/i.test(bin) && typeof process !== 'undefined' && process.execPath) return [process.execPath, bin]
-        return bin
+      const prefix = resolveMimoExePrefix(env)
+      if (prefix.length && prefix[0]) {
+        const head = String(prefix[0])
+        if (prefix.length > 1) return prefix
+        if (/\.(mjs|cjs|js)$/i.test(head) && typeof process !== 'undefined' && process.execPath) return [process.execPath, head]
+        return head
       }
       return await subprocess.resolveExecutable('mimo', undefined, signal)
     }
@@ -70,9 +67,22 @@ return {
       return '.'
     }
 
-    // 预选链（沙箱无 fs 读设置文件）：env MIMO_BRIDGE_BACKEND / MIMO_BACKEND。
-    function getPreferredBackend() {
-      return env.MIMO_BRIDGE_BACKEND || env.MIMO_BACKEND || null
+    // 设置分区（descriptor 的 host.getSettings('mimo') 契约：直接返回分区对象
+    // { defaultModel } 或空对象）。每次调用重读统一设置文件 —— 面板改默认模型后
+    // 无需重启即生效；读不到（沙箱无 fs / 文件缺失）回落 {} = 不传 --model。
+    function getSettings() {
+      try {
+        const proc = (typeof process !== 'undefined') ? process : null
+        const nodeFs = (proc && typeof proc.getBuiltinModule === 'function') ? proc.getBuiltinModule('node:fs') : null
+        if (!nodeFs || typeof nodeFs.readFileSync !== 'function') return {}
+        const nodePath = (proc && typeof proc.getBuiltinModule === 'function') ? proc.getBuiltinModule('node:path') : null
+        const join = nodePath ? nodePath.join.bind(nodePath) : ((...p) => p.join('/'))
+        const file = env.CLI_BRIDGE_SETTINGS_FILE || (env.DSH_HOME ? join(env.DSH_HOME, 'cli-bridge-settings.json') : null)
+        if (!file) return {}
+        const all = JSON.parse(nodeFs.readFileSync(file, 'utf8'))
+        if (all && typeof all === 'object' && all.mimo && typeof all.mimo === 'object') return all.mimo
+      } catch (e) { /* 读不到：回落空分区（默认模型为空 → 不传 --model） */ }
+      return {}
     }
 
     function planActiveFor(exec) {
@@ -85,7 +95,7 @@ return {
       return false
     }
 
-    provider.attach({ ctx, subprocess, resolveExe, getCwdFallback, getPreferredBackend, planActiveFor, publish })
+    provider.attach({ ctx, subprocess, resolveExe, getCwdFallback, getSettings, planActiveFor, publish })
 
     const OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
 
@@ -126,13 +136,22 @@ return {
     // 浏览器指示灯轮询的 RPC 面（旧 dynamic/handle('mimo_status') 语义）。
     harness.handle('mimo_status', function () { return provider.statusToolLogic({}) })
 
-    // 旧 policy 文案 verbatim（提示词连续性红线）。
+    // 提示词连续性（契约 §8）：决策表 / 上下文协议 / 回退协议三段保留旧语义；后端段与
+    // 模型段随「去 desktop 化 + 模型手动指定」重写（免费 API 已终止 + mimo auth login）。
+    // 与 preset/mimo-first/cli-bridge.mjs 的 policy 段保持同文。
     const policyText = [
-      'mimo-first execution policy (Xiaomi MiMo: MiMoCode CLI or MiMo Desktop client).',
+      'mimo-first execution policy (Xiaomi MiMo: MiMoCode CLI).',
       '',
-      'Local backends (selectable in settings: backend = mimocode | mimo-desktop):',
-      '- mimocode (default): local `mimo` CLI (MiMoCode). Full DSH control (--dangerously-skip-permissions, never prompts).',
-      '- mimo-desktop: Xiaomi MiMo Desktop client local API (running Desktop app; uses its login/model/session UI).',
+      'Local `mimo` CLI (MiMoCode) handles coding tasks under full DSH control (--dangerously-skip-permissions, never prompts).',
+      '',
+      'Model:',
+      '- The model is chosen in the CLI Bridge settings panel (provider/model form, e.g. xiaomi/mimo-v2.6-flash) — this bridge does not pick one.',
+      '- Leave the setting empty to pass no --model, letting the mimo CLI use its own default. A per-call `model` argument overrides the setting for that call only.',
+      '- List available models with `mimo models` on this machine.',
+      '',
+      'Credentials:',
+      "- Xiaomi MiMo's free API service has ENDED. The user must run `mimo auth login` (or configure a third-party API) on this machine before dispatch works.",
+      '- If a run fails with sign-in / free-API-ended errors, tell the user to log in. Do not retry in a loop.',
       '',
       'By default, dispatch runs in the background and returns a jobId immediately; collect via job_output and watch live progress via mimo_status.',
       '',
@@ -142,12 +161,6 @@ return {
       '- Follow-ups on the same topic -> mimo_continue (with latest=true or sessionId; context is preserved).',
       '- Final build/test verification of mimo output -> Native tools.',
       '- Plan / read-only analysis -> mimo_run with mode=plan.',
-      '- Desktop-native work (Desktop session UI, shared Desktop login/model) -> prefer backend=mimo-desktop (or preselect it in settings).',
-      '',
-      'Backend preselection (settings):',
-      '- Default backend is configured OUT-OF-BAND (plugin config.backend / env MIMO_BRIDGE_BACKEND / settings file).',
-      '- Per-call `backend` argument overrides the default only when necessary.',
-      '- Do NOT invent a backend every call — use the preselected default.',
       '',
       'Context protocol (one topic = one mimo session):',
       '- First dispatch on a topic: compact CONTEXT preamble (point to paths, do not paste file contents).',

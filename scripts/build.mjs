@@ -50,14 +50,22 @@ function emit(rel, content) {
 
 // ── 1. dynamic host（文本内联，沙箱禁 import）──────────────────────────────────
 function stripModuleSyntax(src, label) {
-  const out = src
+  // 多行 import（`import {\n a, b\n} from '...'`）在单行过滤下会残留 `import ` 前缀并
+  // 触发下面的守卫误报 —— 先把跨行 import 折叠成一行再过滤（与单行同规则）。
+  const collapsed = src.replace(
+    /^\s*import\s*\{[^}]*\}\s*from\s*['"][^'"]+['"];?\s*$/gms,
+    (m) => '// ' + m.replace(/\s+/g, ' ').trim()
+  )
+  const out = collapsed
     .split('\n')
     .filter((l) => !/^\s*import\s[^(]*from\s*['"][^'"]+['"];?\s*$/.test(l) && !/^\s*import\s*['"]/.test(l))
     .join('\n')
-    .replace(/^export\s+(const|let|var|function|async function|class)\s/gm, '$1 ')
-    .replace(/^export\s+default\s+(async\s+)?function\s+([A-Za-z0-9_$]+)\s*/gm, '$1function $2 ')
-    .replace(/^export\s+default\s+(async\s+)?function\s*\(/gm, '$1function __default__(')
-    .replace(/^export\s*\{[^}]*\};?\s*$/gm, '')
+    // 缩进形态也要剥：`export function f()` 可能带前导空格（从 descriptor 闭包里
+    // 搬出来的函数保留原缩进），只匹配行首会漏掉 → 残留 export 在脚本体里直接语法错。
+    .replace(/^(\s*)export\s+(const|let|var|function|async function|class)\s/gm, '$1$2 ')
+    .replace(/^(\s*)export\s+default\s+(async\s+)?function\s+([A-Za-z0-9_$]+)\s*/gm, '$1$2function $3 ')
+    .replace(/^(\s*)export\s+default\s+(async\s+)?function\s*\(/gm, '$1$2function __default__(')
+    .replace(/^(\s*)export\s*\{[^}]*\};?\s*$/gm, '')
   // 内联目标是「脚本体」：残留的 export default/import 说明源用了本转换器不支持
   // 的形态。静默产出坏代码会让 dynamic host 在沙箱里炸得莫名其妙，必须大声失败。
   if (/^\s*(export\s+default|import\s|import\()/m.test(out)) {
@@ -77,10 +85,20 @@ function buildDynamicHost(id) {
   // 模板没有 /*__SCHED__*/ 占位（旧模板）→ 不注入，保持向后兼容。
   const sched = stripModuleSyntax(read('core/scheduling.mjs'), 'core/scheduling.mjs')
     + '\nconst SCHED_ALL_IDS = ' + JSON.stringify(ids) + '\n'
+  // 可选的第二段内联：providers/<id>-catalog.mjs。存在且模板声明了占位符才注入 ——
+  // 语义与 __SCHED__ 完全同构（模板没有该占位符 → 不注入，向后兼容）。
+  // 目的：providers/<id>.mjs 超 600 行红线时把纯逻辑拆出去，沙箱里仍是单脚本。
+  const extraRel = 'providers/' + id + '-catalog.mjs'
+  const extra = existsSync(join(ROOT, extraRel)) ? stripModuleSyntax(read(extraRel), extraRel) : null
   if (!tpl.includes('/*__KIT__*/') || !tpl.includes('/*__PROVIDER__*/')) {
     throw new Error(tplRel + ' missing /*__KIT__*/ or /*__PROVIDER__*/ placeholder')
   }
   let out = tpl.replace('/*__KIT__*/', () => kit).replace('/*__PROVIDER__*/', () => prov)
+  // __EXTRA__ 放在 KIT/PROVIDER 之后替换：避免其内容里若含同名占位符被二次展开。
+  if (out.includes('/*__EXTRA__*/')) {
+    if (!extra) throw new Error(tplRel + ': __EXTRA__ placeholder present but ' + extraRel + ' missing')
+    out = out.replace('/*__EXTRA__*/', () => extra)
+  } else if (tpl.includes('/*__EXTRA__*/')) throw new Error(tplRel + ': __EXTRA__ placeholder vanished after other replacements')
   if (out.includes('/*__SCHED__*/')) out = out.replace('/*__SCHED__*/', () => sched)
   else if (tpl.includes('/*__SCHED__*/')) throw new Error(tplRel + ': __SCHED__ placeholder vanished after other replacements')
   return out

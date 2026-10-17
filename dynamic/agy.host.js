@@ -575,7 +575,7 @@ function createRunner(o) {
 //  - 本文件会被 build 内联进 dynamic 沙箱（new Function）：绝不出现 import.meta 字面量；
 //    process 只经 deps 注入或 typeof 守卫读取；宿主能力全部走 deps/attach(hostOpts)。
 //  - 只允许 import '../core/bridge-kit.mjs'。
-
+// import { createStatusEngine, createRunner, clampInt, isLimited } from '../core/bridge-kit.mjs'
 // subprocess stdio 预算（与 bridge-kit createRunner 内部 stdio 一致；quota 脚本用）。
 const STDIO = {
   stdin: 'ignore',

@@ -6,8 +6,6 @@
 //  - mimocode：直接 spawn mimo CLI（MIMO_BIN/MIMO_CLI > ~/.mimocode/bin/mimo[.exe] >
 //    'mimo'；.mjs/.cjs/.js 目标经 process.execPath 包装，供测试 fixture 使用）。
 //    实时折叠走 bridge-kit 行流 + engine.foldEvent（旧 foldStep 语义）。
-//  - mimo-desktop：委托 provider.execute（provider.delegates('mimo-desktop')=true）；
-//    非 spawn 走本地 HTTP。begin/end 由本模块做（MCP 无 kit runner）。
 //  - cwd 兜底 = env MIMO_MCP_CWD || MIMO_BRIDGE_CWD || process.cwd()（旧 CWD_FALLBACK；
 //    旧仓曾硬编码机器绝对路径，新实现按 agy 定案改 process.cwd() 兜底）。
 //  - 无 ctx.emit：状态走快照文件 {homeDir}/cli-bridge-mcp-mimo.json（keystone
@@ -16,12 +14,17 @@
 //    工具结果）。旧 mcp-live.json 兼容读归 keystone，本面不写旧文件。
 //  - 限流（isLimited）触发即落 fallbackResult（旧 handleTool verbatim：run 内部各退出
 //    路径均已 engine.end，此处仅改返回值对象，绝不二次 engine.end —— 防 runs 虚标/计数下溢）。
+//
+// 2026-10 去 desktop 化：MiMo 免费 API 服务已被官方终止 + 本机 0 凭据 → 只走
+// `mimo run`（MiMoCode CLI）。desktop 本地 HTTP 后端（BACKEND_DESKTOP / execute 分支 /
+// preflight）全部移除；模型由用户在 CLI Bridge 设置里手动指定（defaultModel），
+// 登录由用户在 CLI 侧 `mimo auth login` 自理。
 
 import { spawn as nodeSpawn } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
 import { dirname, join as joinPath, resolve as resolvePath } from 'node:path'
 
-import defineProvider from '../../providers/mimo.mjs'
+import defineProvider, { resolveMimoExePrefix } from '../../providers/mimo.mjs'
 import {
   createStatusEngine, createLineStream, buildMcpBridgePayload,
   fallbackResult, shortLabel, renderStatus
@@ -30,7 +33,6 @@ import { packageVersion } from '../version.mjs'
 
 export const meta = { id: 'mimo', label: 'MIMO', version: packageVersion() }
 
-const BACKEND_DESKTOP = 'mimo-desktop'
 const SETTINGS_FILE_NAME = 'cli-bridge-settings.json'
 
 // 统一设置文件分区读（与 preset 同规则；MCP 子进程无 ctx.get，只读 env/文件）。
@@ -82,44 +84,28 @@ function publishSnapshot(snapshot) {
 const engine = createStatusEngine({ provider, publish: publishSnapshot })
 provider.engine = engine
 
-// ── exe / cwd 解析（旧 resolveMimoExe + CWD_FALLBACK verbatim 语义）──────────────
+// ── exe / cwd 解析（与 descriptor resolveMimoExePrefix 单一真源同优先级）──────────
+// MIMO_BIN/MIMO_CLI > 已知安装位置 ~/.mimocode/bin/mimo[.exe] > 'mimo'；
+// .mjs/.cjs/.js 目标经 process.execPath 包装（供测试 fixture 使用）。
 function exePrefix() {
-  const env = process.env
-  const candidates = []
-  if (env.MIMO_BIN) candidates.push(env.MIMO_BIN)
-  if (env.MIMO_CLI) candidates.push(env.MIMO_CLI)
-  if (env.USERPROFILE) candidates.push(env.USERPROFILE + '\\.mimocode\\bin\\mimo.exe')
-  if (env.HOME) {
-    candidates.push(env.HOME + '\\.mimocode\\bin\\mimo.exe')
-    candidates.push(env.HOME + '/.mimocode/bin/mimo')
-  }
-  for (const exe of candidates) {
-    try { if (exe && existsSync(exe)) return /\.(mjs|cjs|js)$/i.test(exe) ? [process.execPath, exe] : [exe] } catch (e) { }
-  }
-  const bin = env.MIMO_BIN || env.MIMO_CLI || ''
-  if (bin) return /\.(mjs|cjs|js)$/i.test(bin) ? [process.execPath, bin] : [bin]
-  return ['mimo']
+  return resolveMimoExePrefix(process.env)
 }
 function resolveCwd(a) {
   if (a && a.cwd) return resolvePath(String(a.cwd))
   return process.env.MIMO_MCP_CWD || process.env.MIMO_BRIDGE_CWD || process.cwd()
-}
-function preferredBackendFromEnv() {
-  const env = process.env
-  return env.MIMO_BRIDGE_BACKEND || env.MIMO_BACKEND || (readPartition(env).partition || {}).preferredBackend || null
 }
 
 // ── spawn（旧 runMimo verbatim 语义；实时折叠走 bridge-kit 行流）────────────────
 function runMimo(args) {
   return new Promise((resolve) => {
     const cwd = resolveCwd(args)
-    const built = provider.buildArgv(exePrefix(), args, { planActive: false, defaultMode: 'auto', backend: 'mimocode' })
+    const built = provider.buildArgv(exePrefix(), args, { planActive: false, defaultMode: 'auto' })
     engine.begin(cwd)
     let child
     try {
       child = nodeSpawn(built.argv[0], built.argv.slice(1), { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
     } catch (e) {
-      const res = { ok: false, status: 'MIMO_UNAVAILABLE', response: '', sessionId: null, exitCode: null, mode: built.mode, backend: 'mimocode', stderr: 'mimo spawn failed: ' + String(e && e.message || e), errorMessage: String(e && e.message || e) }
+      const res = { ok: false, status: 'MIMO_UNAVAILABLE', response: '', sessionId: null, exitCode: null, mode: built.mode, backend: null, stderr: 'mimo spawn failed: ' + String(e && e.message || e), errorMessage: String(e && e.message || e) }
       engine.end(res, cwd)
       resolve(res)
       return
@@ -142,7 +128,7 @@ function runMimo(args) {
     child.on('error', (e) => {
       clearTimeout(timer)
       stream.flush()
-      const res = { ok: false, status: 'MIMO_UNAVAILABLE', response: '', sessionId: null, exitCode: null, mode: built.mode, backend: 'mimocode', stderr: String(e && e.message || e), errorMessage: String(e && e.message || e) }
+      const res = { ok: false, status: 'MIMO_UNAVAILABLE', response: '', sessionId: null, exitCode: null, mode: built.mode, backend: null, stderr: String(e && e.message || e), errorMessage: String(e && e.message || e) }
       engine.end(res, cwd)
       resolve(res)
     })
@@ -150,7 +136,7 @@ function runMimo(args) {
       clearTimeout(timer)
       stream.flush()
       const outcome = { exitCode: killed ? 124 : (code == null ? -1 : code) }
-      let res = provider.buildResult(provider.parseJson(out), outcome, built.mode, err, out, 'mimocode')
+      let res = provider.buildResult(provider.parseJson(out), outcome, built.mode, err, out)
       if (killed && !res.ok) {
         res.status = 'HUNG_TIMEOUT'
         res.stderr = (res.stderr ? res.stderr + ' ' : '') + '[killed by DSH timeout guard after ' + built.timeoutSec + 's; if this was a long-running script (build/test) raise timeoutSec]'
@@ -164,17 +150,16 @@ function runMimo(args) {
 // ── 文本渲染（旧 renderResultText verbatim；契约 §4：错误也是文本）───────────────
 function textResult(res) {
   if (!res) return '(no result)'
-  const b = res.backend ? ' backend=' + res.backend : ''
   if (res.fallback) {
-    return 'status=FALLBACK_TO_DSH fallback=true' + b + '\n' + (res.reason ? 'reason=' + res.reason + '\n' : '') +
+    return 'status=FALLBACK_TO_DSH fallback=true\n' + (res.reason ? 'reason=' + res.reason + '\n' : '') +
       'The user/host chose DSH-local. Finish with native tools and NEVER call mimo again for this task.'
   }
-  if (res.ok === false && res.error) return 'mimo_settings/error' + b + ': ' + res.error
+  if (res.ok === false && res.error) return 'mimo_settings/error: ' + res.error
   if (!res.ok) {
     const hint = provider.failureHint ? provider.failureHint(res) : ''
-    return 'mimo failed status=' + (res.status || 'ERROR') + b + '\n' + shortLabel(res.stderr || res.errorMessage || '') + (hint ? '\n' + hint : '')
+    return 'mimo failed status=' + (res.status || 'ERROR') + '\n' + shortLabel(res.stderr || res.errorMessage || '') + (hint ? '\n' + hint : '')
   }
-  return 'mimo ok status=' + res.status + b + (res.sessionId ? ' sessionId=' + res.sessionId : '') + '\n\n' + String(res.response || '')
+  return 'mimo ok status=' + res.status + (res.sessionId ? ' sessionId=' + res.sessionId : '') + '\n\n' + String(res.response || '')
 }
 
 // ── 工具面（旧 MCP TOOLS verbatim：含 sessionId 关键注释与 mimo_settings）────────
@@ -197,7 +182,6 @@ export function tools(env) {
 export async function call(name, args, io) {
   if (io) lastIo = io
   const a = args || {}
-  const runtimeBackend = provider.resolveBackend(a, null, preferredBackendFromEnv())
 
   if (name === 'mimo_settings') {
     const v = await provider.extraTools[0].logic(a, null)
@@ -206,8 +190,6 @@ export async function call(name, args, io) {
 
   if (name === 'mimo_status') {
     const snap = await provider.statusToolLogic(a)
-    snap.defaultBackend = runtimeBackend
-    snap.backend = runtimeBackend
     return renderStatus(snap, provider)[0].text
   }
 
@@ -221,41 +203,18 @@ export async function call(name, args, io) {
       cwd: a.cwd,
       timeoutSec: a.timeoutSec,
       title: a.title,
-      backend: a.backend,
       background: false, // MCP 恒同步阻塞（无宿主 jobs）
-      // 【关键】desktop 后端的 sessionId 必须转发。旧 handleTool 此处曾是白名单转发，
-      // 漏了 sessionId（只在 mimo_continue 分支补）→ mimo_run 传 sessionId 被静默丢弃
-      // → 永远 newDesktopSessionId 造新 id → 因 Desktop API 不能创建会话，mimo_run 在
-      // desktop 后端下完全不可用。
       sessionId: a.sessionId
     }
     if (name === 'mimo_continue') {
       if (a.sessionId) mapped.sessionId = a.sessionId
       else mapped.continueLatest = true
     }
-    const backend = provider.resolveBackend(mapped, null, preferredBackendFromEnv())
-    let res
-    if (backend === BACKEND_DESKTOP) {
-      const pf = provider.preflight({ backend })
-      if (pf && pf.abort) {
-        res = pf.abort
-        engine.begin(resolveCwd(mapped))
-        engine.end(res, resolveCwd(mapped))
-      } else {
-        const cwd = resolveCwd(mapped)
-        const built = provider.buildArgv(exePrefix(), mapped, { planActive: false, defaultMode: 'auto', backend })
-        engine.begin(cwd)
-        res = await provider.execute({ args: mapped, cwd, built, backend })
-        engine.end(res, cwd)
-      }
-    } else {
-      res = await runMimo(mapped)
-    }
+    const res = await runMimo(mapped)
     if (!res.ok && provider.isLimited(res)) {
-      // runMimo / desktop 分支所有退出路径均已 engine.end；此处仅改返回值对象，
+      // runMimo 所有退出路径均已 engine.end；此处仅改返回值对象，
       // 绝不二次 engine.end（防 runs 虚标与 running 计数下溢）。
-      res = fallbackResult(res, res.mode, provider)
-      res.backend = backend
+      return textResult(fallbackResult(res, res.mode, provider))
     }
     return textResult(res)
   }
@@ -278,14 +237,24 @@ export function check(env) {
     if (!names.includes(provider.tools[k].name)) throw new Error('mimo mcp: tools surface missing descriptor name ' + provider.tools[k].name)
   }
   // mimocode argv 契约（旧 core verbatim）。
-  const b = provider.buildArgv(['mimo'], { prompt: 'x' }, { planActive: false, backend: 'mimocode' })
+  const b = provider.buildArgv(['mimo'], { prompt: 'x' }, { planActive: false })
   for (const f of ['run', '--format', 'json', '--dangerously-skip-permissions', '--agent', 'build']) {
     if (!b.argv.includes(f)) throw new Error('mimo mcp: argv contract drift: ' + f)
   }
-  // mimo-desktop 空壳（非 spawn 路径，交 execute）。
-  const d = provider.buildArgv(['mimo'], { prompt: 'x' }, { planActive: false, backend: BACKEND_DESKTOP })
-  if (d.argv.length !== 0) throw new Error('mimo mcp: desktop buildArgv must be empty shell')
-  // delegates 规则：只有 desktop 委托。
-  if (provider.delegates(BACKEND_DESKTOP) !== true || provider.delegates('mimocode') !== false) throw new Error('mimo mcp: delegates contract drift')
+  // 模型语义（去 desktop 化后）：设置 defaultModel 留空 = 不传 --model；
+  // args.model 或 settings.defaultModel 有值才落地 --model（provider/model 语义）。
+  if (b.argv.includes('--model')) throw new Error('mimo mcp: --model must be absent when no default model is set')
+  const withArg = provider.buildArgv(['mimo'], { prompt: 'x', model: 'xiaomi/mimo-v2.6-flash' }, { planActive: false })
+  const mi = withArg.argv.indexOf('--model')
+  if (mi < 0 || withArg.argv[mi + 1] !== 'xiaomi/mimo-v2.6-flash') throw new Error('mimo mcp: --model must carry the provider/model argument')
+  // 设置分区契约：defaultModel 单一键，默认空串（不写死模型）。
+  const keys = provider.settings.keys
+  if (keys.length !== 1 || keys[0] !== 'defaultModel') throw new Error('mimo mcp: settings.keys must be [defaultModel]')
+  if (provider.settings.defaults().defaultModel !== '') throw new Error('mimo mcp: defaultModel default must be empty (mimo CLI self-decides)')
+  if (provider.settings.normalize({ defaultModel: '  xiaomi/mimo-v2.6-pro  ', junk: 1 }).defaultModel !== 'xiaomi/mimo-v2.6-pro') {
+    throw new Error('mimo mcp: settings.normalize must trim defaultModel and drop unknown keys')
+  }
+  // 单后端：无 backend 概念残留（旧 mimo-desktop 已取消）。
+  if (provider.resolveBackend({ backend: 'mimo-desktop' }, null, null) != null) throw new Error('mimo mcp: backend must stay null after de-desktop-ification')
   return true
 }

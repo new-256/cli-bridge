@@ -62,9 +62,13 @@ test('生成物保留沙箱接线面（harness.registerTool / handle / collector
   assert.ok(out.includes("ctx.get('mimoCollector')"), 'legacy mimoCollector alias kept (旧仓兼容)')
 })
 
-test('沙箱桌面纪律：无 fetch 经 preflight abort DESKTOP_UNREACHABLE（契约 §9，不裸 fetch）', () => {
+test('沙箱单后端纪律：无桌面回读、无裸 fetch（去桌面化后仅 spawn 路径）', () => {
   const out = readFileSync(OUT, 'utf8')
-  // provider 的 preflight 已内联进生成物
-  assert.ok(out.includes('DESKTOP_UNREACHABLE'), 'preflight abort status inlined')
-  assert.ok(out.includes('globalThis.fetch'), 'fetch probed via globalThis (typeof-guarded)')
+  // 去 desktop 化：preflight/桌面 HTTP 回读全部移除，生成物不得残留桌面 abort 状态。
+  assert.ok(!out.includes('DESKTOP_UN' + 'REACHABLE'), 'no desktop preflight abort status')
+  assert.ok(!/desktopFetch|desktopHealth|desktopSendTurn|newDesktopSessionId/.test(out), 'no desktop HTTP helpers')
+  assert.ok(!/\/v1\/health|\/v1\/sessions/.test(out), 'no desktop local API routes')
+  // 模型语义内联：defaultModel 空 = 不传 --model（mimo CLI 自决）。
+  assert.ok(out.includes("argv.push('--model'"), 'model flag is conditional')
+  assert.ok(out.includes('defaultModel'), 'defaultModel setting inlined')
 })

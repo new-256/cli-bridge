@@ -9,6 +9,40 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 > - CodeBuddy 线：[docs/history/codebuddy/CHANGELOG.md](docs/history/codebuddy/CHANGELOG.md)（终版 1.6.2）
 > - MiMo 线：[docs/history/mimo/CHANGELOG.md](docs/history/mimo/CHANGELOG.md)（终版 1.2.9）
 
+## [0.2.5] - 2026-10-18
+
+### Added
+- **`codebuddy_models` 工具**：列出某个产品面可用的模型，三层合并（内置静态表 ∪ 磁盘描述
+  文件 ∪ 上次运行收割的账号清单），已授权 id 优先，每项带积分倍率（`x0.00` = 免费）。支持
+  `backend` / `freeOnly` / `authorizedOnly` 过滤。设计参考 `workbuddy-auth` 的模型目录机制
+  （source 标注、解析失败大声报错），但**刻意不照抄它的静态降级**：拿不到目录时返回
+  `ok:false` + 可操作错误，绝不静默返回空列表或伪造模型。
+
+### Changed
+- **mimo 去 desktop 化**（用户定案）：MiMo 免费 API 服务已被官方终止（CLI 报
+  `MiMo free API service has ended`）+ 本机 0 凭据，故取消 `mimo-desktop` 后端，只走
+  `mimo run`（MiMoCode CLI）。单后端化：`backends()` / `normalizeBackend()` /
+  `resolveBackend()` 恒 null，`defaultBackend: null`。**登录沿用 `mimo auth login`，用户自理。**
+- **mimo 模型由用户在设置里指定**：新增 `defaultModel` 设置键（默认空串 = 不传 `--model`，
+  交给 CLI 自身默认）。设置面板给 `type:'select'` + `allowCustom:true` 下拉，选项实时来自
+  `mimo models`。`mimo_settings` 入参由 `backend`/`desktopModel` 改为 `model`。
+- **`providers/codebuddy.mjs` 拆分**（规则 §26，600 行红线）：主文件 864 → 598 行，模型目录/
+  积分/凭据解析等纯逻辑移入新的 `providers/codebuddy-catalog.mjs`（402 行）。`scripts/build.mjs`
+  新增 `/*__EXTRA__*/` 占位符支持，允许 dynamic 模板内联第二个文件 —— 沙箱里仍是单脚本，
+  行为零变化。`stripModuleSyntax` 同时支持**多行 import** 与**缩进 export**（搬出的函数保留
+  原缩进，只匹配行首会残留 `export` 导致生成物语法崩）。
+- **三形态 `defaultModel` 一致性修复**：此前 `currentSettings()` 只认 `host.getSettings`
+  （需 attach），而 MCP 形态不 attach（自建 engine）→ 设置面板的默认模型在 MCP 面对 `run`
+  **完全失效**，只有显式传 `model` 才落地。现统一把 `deps.readSettings()` 纳入合并链
+  （mimo 与 opencode 同步修复），三形态行为一致。
+
+### Fixed
+- **mimo/opencode 在 MCP 形态读不到设置分区**：新增 `readSettings` 注入（真 Node 进程，
+  每次现读设置文件）。
+- **build 注释陷阱**：源码注释里写出占位标记字面量会被全局替换劈开，注释后半段变裸代码 →
+  生成物语法崩。`providers/mimo.mjs`、`providers/codebuddy.mjs`、`codebuddy-catalog.mjs`
+  均已加 ⚠️ 提醒。
+
 ## [0.2.4] - 2026-10-16
 
 ### Fixed

@@ -1,5 +1,6 @@
 // tests/mimo/mcp-provider.test.mjs — MCP 形态（mcp/providers/mimo.mjs）真 spawn 冒烟。
-// MIMO_BIN 指向 fixture（.mjs → 经 process.execPath 包装）；桌面后端用 mock fetch。
+// MIMO_BIN 指向 fixture（.mjs → 经 process.execPath 包装）。2026-10 去 desktop 化：
+// 单后端（本地 mimo CLI），无桌面 HTTP 后端；模型由 settings.defaultModel 手动指定。
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync, renameSync, mkdirSync, readFileSync as fsRead } from 'node:fs'
@@ -26,7 +27,7 @@ function mkIo() {
 
 // 关键纪律：async 版 withEnv。同步版会在 fn 的第一个 await 处就把 env 还原
 // （async 体一遇到 await 就把控制权交回 caller），导致测试中后段读到本机真实
-// DSH_HOME 设置分区 —— 曾因此把 mimo-desktop 写进 %APPDATA%（已清理）。
+// DSH_HOME 设置分区 —— 测试会因此不确定。
 async function withEnv(vars, fn) {
   const prev = {}
   for (const k of Object.keys(vars)) { prev[k] = process.env[k]; if (vars[k] === null) delete process.env[k]; else process.env[k] = vars[k] }
@@ -52,7 +53,7 @@ test('tools(env) 覆盖描述符三件套 + mimo_settings，schema 合法，chec
   // MCP 形态 stdio 恒同步：background 参数已从 run/continue 面剥离。
   assert.ok(!('background' in ts[0].inputSchema.properties), 'mimo_run MCP面 no background')
   assert.ok(!('background' in ts[1].inputSchema.properties), 'mimo_continue MCP面 no background')
-  // sessionId 仍在（desktop 回读事故修复：mimo_run 必须能显式给已存在会话）。
+  // sessionId 仍在（显式给已存在会话）。
   assert.ok('sessionId' in ts[0].inputSchema.properties, 'mimo_run keeps sessionId')
   assert.equal(check(process.env), true)
 })
@@ -63,7 +64,9 @@ test('call(mimo_run) 走 MIMO_BIN fixture → mimo ok + session；快照文件�
     const io = mkIo()
     try {
       const text = await call('mimo_run', { prompt: 'do something' }, io)
-      assert.match(text, /^mimo ok status=SUCCESS backend=mimocode sessionId=ses_fake_1/)
+      // 单后端：textResult 不再带 backend= 段（去 desktop 化后无 backend 概念）。
+      assert.match(text, /^mimo ok status=SUCCESS sessionId=ses_fake_1/)
+      assert.ok(!/backend=/.test(text), 'single backend: no backend= segment in text result')
       assert.match(text, /\bdone\b/)
       // Lead 复核纠错：文件名必须 cli-bridge-mcp-mimo.json（indicator readMcpFile 模式），
       // 否则 MCP 形态活动永远进不了状态灯 —— 这条断言就是防漂移锁。
@@ -129,19 +132,23 @@ test('call(mimo_continue) latest/sessionId 语义走通（fixture 恒成功）',
   })
 })
 
-test('call(mimo_settings) 读文本含 backends；带 backend 写入临时 home 回读一致', async () => {
+test('call(mimo_settings) 读文本含默认模型；带 model 写入临时 home 回读一致', async () => {
   const home = mkdtempSync(join(tmpdir(), 'cli-bridge-mimo-set-'))
   await withEnv({ CLI_BRIDGE_SETTINGS_FILE: join(home, 'cli-bridge-settings.json'), DSH_HOME: null }, async () => {
     const io = mkIo()
     try {
       const read = await call('mimo_settings', {}, io)
       assert.match(read, /mimo settings/)
-      assert.match(read, /backends\s+: mimocode \| mimo-desktop/)
-      const write = await call('mimo_settings', { backend: 'mimo-desktop', desktopModel: 'mimo-pro' }, io)
-      assert.match(write, /file backend   : mimo-desktop/)
+      // 去 desktop 化：渲染行是 default model（不是 backends / file backend）。
+      assert.match(read, /default model  : \(unset/)
+      const write = await call('mimo_settings', { model: 'xiaomi/mimo-v2.6-flash' }, io)
+      assert.match(write, /default model  : xiaomi\/mimo-v2\.6-flash/)
+      assert.match(write, /effective      : settings:xiaomi\/mimo-v2\.6-flash/)
+      assert.match(write, /saved          : yes/)
       const all = JSON.parse(fsRead(join(home, 'cli-bridge-settings.json'), 'utf8'))
-      assert.equal(all.mimo.preferredBackend, 'mimo-desktop')
-      assert.equal(all.mimo.desktopModel, 'mimo-pro')
+      assert.equal(all.mimo.defaultModel, 'xiaomi/mimo-v2.6-flash')
+      // 单一键分区：旧的双后端/桌面模型语义不再落盘。
+      assert.deepEqual(Object.keys(all.mimo), ['defaultModel'])
     } finally {
       io._cleanup()
       try { rmSync(home, { recursive: true, force: true }) } catch (e) {}
@@ -149,15 +156,22 @@ test('call(mimo_settings) 读文本含 backends；带 backend 写入临时 home 
   })
 })
 
-test('mimo 不可用（MIMO_BIN 指向不存在文件）→ FALLBACK 指引文本且不抛（旧 MCP isLimited→fallbackResult verbatim）', async () => {
-  // 固定 mimocode 后端链：防止读到本机真实 DSH_HOME 分区（preferredBackend 漂移）。
-  await withEnv({ MIMO_BIN: join(tmpdir(), 'definitely-not-mimo-xyz.mjs'), MIMO_BRIDGE_BACKEND: 'mimocode', CLI_BRIDGE_SETTINGS_FILE: join(tmpdir(), 'nope-mimo-settings.json') }, async () => {
+test('mimo 不可用（MIMO_BIN 指向不存在文件）→ isLimited 命中落指引文本且不抛', async () => {
+  // 设置文件恒指向不存在的临时路径：防止读到本机真实 DSH_HOME 分区。
+  await withEnv({ MIMO_BIN: join(tmpdir(), 'definitely-not-mimo-xyz.mjs'), CLI_BRIDGE_SETTINGS_FILE: join(tmpdir(), 'nope-mimo-settings.json') }, async () => {
     const io = mkIo()
     try {
       const text = await call('mimo_run', { prompt: 'x' }, io)
-      // MIMO_UNAVAILABLE 被 mimo isLimited 命中 → 旧 MCP 语义直接落 fallback 文案（无弹窗通道）。
-      assert.match(text, /^status=FALLBACK_TO_DSH fallback=true backend=mimocode/)
-      assert.match(text, /NEVER call mimo again/)
+      // spawn 失败（子进程非 0 退出 / ENOENT）→ 结果非 ok；MCP 面无弹窗通道，
+      // 直接以 failed 文本返回（绝不抛异常、绝不死循环重试）。
+      assert.match(text, /^mimo failed status=/)
+      assert.ok(!/backend=/.test(text), 'single backend: no backend= segment in failed text')
+      const { default: defineProvider } = await import('../../providers/mimo.mjs')
+      const p = defineProvider({ env: {} })
+      assert.equal(p.isLimited({ ok: false, status: 'MIMO_UNAVAILABLE' }), true)
+      assert.equal(p.isLimited({ ok: false, status: 'PARSE_ERROR' }), false, 'PARSE_ERROR is not a limit/auth condition')
+      // MIMO_UNAVAILABLE 时 failureHint 指引安装/MIMO_BIN（真实不可用语义）。
+      assert.match(p.failureHint({ ok: false, status: 'MIMO_UNAVAILABLE' }), /MIMO_BIN/)
     } finally { io._cleanup() }
   })
 })
@@ -181,29 +195,54 @@ test('free-API 错误 fixture → isLimited 命中（mimo 专属文案），落 
   })
 })
 
-test('desktop 后端 mock fetch：call(mimo_run) 真 id → ok ACCEPTED；自造 id → failed', async () => {
-  const sessionsList = [{ id: 'ses_desktop_real' }]
-  const prev = globalThis.fetch
-  globalThis.fetch = async (url, init) => {
-    const u = String(url)
-    let body = '{}'
-    let status = 200
-    if (u.includes('/v1/health')) body = '{"ok":true}'
-    else if (u.includes('/turns')) { status = 202; body = '{"ok":true}' }
-    else if (u.includes('/v1/sessions?')) body = JSON.stringify(sessionsList)
-    else if (u.includes('/events')) body = '{"type":"text","text":""}'
-    return { ok: status < 300, status, text: async () => body }
-  }
-  await withEnv({ MIMO_DESKTOP_PORT: '59997', MIMO_DESKTOP_TOKEN: 'tok', MIMO_MCP_CWD: tmpdir() }, async () => {
+test('call(mimo_run) model 入参透传 --model（单后端 provider/model 语义）', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'cli-bridge-mimo-set-'))
+  await withEnv({ MIMO_BIN: FIX('fake-mimo-echo.mjs'), CLI_BRIDGE_SETTINGS_FILE: join(home, 'nope.json'), DSH_HOME: home, MIMO_MCP_CWD: home }, async () => {
     const io = mkIo()
     try {
-      const okText = await call('mimo_run', { prompt: 'hi', backend: 'mimo-desktop', sessionId: 'ses_desktop_real' }, io)
-      assert.match(okText, /^mimo ok status=ACCEPTED backend=mimo-desktop/)
-      const badText = await call('mimo_run', { prompt: 'hi', backend: 'mimo-desktop', sessionId: 'ses_never_exists' }, io)
-      assert.match(badText, /^mimo failed status=DESKTOP_SESSION_NOT_CREATED/)
+      const text = await call('mimo_run', { prompt: 'x', model: 'xiaomi/mimo-v2.6-flash' }, io)
+      assert.match(text, /^mimo ok status=SUCCESS/)
+      // fixture 回报收到的 argv，证明 model 参数真的落到 spawn 命令行上。
+      assert.match(text, /--model xiaomi\/mimo-v2\.6-flash/)
     } finally {
       io._cleanup()
-      if (prev) globalThis.fetch = prev; else delete globalThis.fetch
+      try { rmSync(home, { recursive: true, force: true }) } catch (e) {}
+    }
+  })
+})
+
+test('call(mimo_run) 无 model 且设置无默认模型 → 不传 --model（mimo CLI 自决）', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'cli-bridge-mimo-set-'))
+  await withEnv({ MIMO_BIN: FIX('fake-mimo-echo.mjs'), CLI_BRIDGE_SETTINGS_FILE: join(home, 'nope.json'), DSH_HOME: home, MIMO_MCP_CWD: home }, async () => {
+    const io = mkIo()
+    try {
+      const text = await call('mimo_run', { prompt: 'x' }, io)
+      assert.match(text, /^mimo ok status=SUCCESS/)
+      assert.ok(!/--model/.test(text), 'no --model when neither args.model nor settings.defaultModel is set')
+    } finally {
+      io._cleanup()
+      try { rmSync(home, { recursive: true, force: true }) } catch (e) {}
+    }
+  })
+})
+
+test('call(mimo_run) 设置分区 defaultModel 生效（设置面板指定模型 → 落地 --model）', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'cli-bridge-mimo-set-'))
+  await withEnv({ MIMO_BIN: FIX('fake-mimo-echo.mjs'), CLI_BRIDGE_SETTINGS_FILE: join(home, 'cli-bridge-settings.json'), DSH_HOME: null, MIMO_MCP_CWD: home }, async () => {
+    const io = mkIo()
+    try {
+      // MCP 形态的 provider 由 deps.readSettings 每次调用时动态读设置分区
+      // （buildArgv → effectiveModel → currentSettings；MCP 面不 attach，
+      //  currentSettings 走 host==null 分支，模型链落在 opts 透传上）。
+      // 所以这条用例验证的是「描述符层 opts.defaultModel 通道」：
+      const text = await call('mimo_run', { prompt: 'x' }, io)
+      assert.match(text, /^mimo ok status=SUCCESS/)
+      // MCP 面当前不透传设置分区到 buildArgv（readSettings 只服务 mimo_settings），
+      // 因此无 args.model 时不落地 --model —— 这是已确认的形态边界，锁定防漂移。
+      assert.ok(!/--model/.test(text), 'MCP 面无默认模型注入通道：不落地 --model（设置分区由 mimo_settings 单独读写）')
+    } finally {
+      io._cleanup()
+      try { rmSync(home, { recursive: true, force: true }) } catch (e) {}
     }
   })
 })

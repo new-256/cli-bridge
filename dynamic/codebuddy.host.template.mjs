@@ -20,6 +20,7 @@
 //    无 fs（descriptor 的 dsh-store 通道缺席）→ preflight 确定性 abort 给提示即可。
 /*__KIT__*/
 /*__PROVIDER__*/
+/*__EXTRA__*/
 /*__SCHED__*/
 
 return {

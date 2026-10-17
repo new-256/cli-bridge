@@ -1,57 +1,53 @@
 // tests/mimo/descriptor.test.mjs — providers/mimo.mjs 描述符契约与移植语义。
+// 2026-10 去 desktop 化：单后端（backends() 恒 null），模型由 settings.defaultModel
+// 手动指定（留空 = 不传 --model，交 mimo CLI 自身默认）；登录走 mimo auth login。
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-import defineProvider from '../../providers/mimo.mjs'
+import defineProvider, { parseMimoModels, fetchMimoModelsSync } from '../../providers/mimo.mjs'
 
 const provider = defineProvider({ env: {} })
+// 真实格式的假 `mimo models` 输出（含中文破折号 U+2014、逗号描述、多连字符模型名）。
+const FIX = (f) => fileURLToPath(new URL('./fixtures/' + f, import.meta.url))
 
 test('契约 ★ 字段齐备（PROVIDER-CONTRACT.md §1）', () => {
   assert.equal(provider.id, 'mimo')
   assert.equal(provider.label, 'MIMO')
   assert.equal(provider.presetId, 'cordis-mimo')
-  assert.equal(provider.defaultBackend, 'mimocode')
+  assert.equal(provider.defaultBackend, null)
   assert.equal(provider.defaultMode, 'auto')
   assert.equal(provider.exeName, 'mimo')
   assert.deepEqual(provider.binEnvVars, ['MIMO_BIN', 'MIMO_CLI'])
   assert.equal(provider.unavailableStatus, 'MIMO_UNAVAILABLE')
-  for (const f of ['backends', 'normalizeBackend', 'resolveBackend', 'buildArgv', 'parseJson', 'buildResult', 'runToolLogic', 'continueToolLogic', 'statusToolLogic', 'attach', 'delegates', 'preflight', 'execute', 'foldStreamEvent', 'isLimited', 'failureHint', 'isSuccessStatus']) {
+  // 去 desktop 化后 delegates/preflight/execute 已移除（非 spawn 单后端，无桌面回读）。
+  for (const f of ['backends', 'normalizeBackend', 'resolveBackend', 'buildArgv', 'parseJson', 'buildResult', 'runToolLogic', 'continueToolLogic', 'statusToolLogic', 'attach', 'foldStreamEvent', 'isLimited', 'failureHint', 'isSuccessStatus']) {
     assert.equal(typeof provider[f], 'function', f + ' must be a function')
   }
   assert.equal(provider.tools.run.name, 'mimo_run')
   assert.equal(provider.tools.continue.name, 'mimo_continue')
   assert.equal(provider.tools.status.name, 'mimo_status')
   assert.equal(provider.extraTools[0].name, 'mimo_settings')
+  // 描述符不再复制版本字面量（单一来源 = mcp/version.mjs 的 packageVersion()）。
+  assert.deepEqual(provider.mcp, {})
 })
 
-test('normalizeBackend：别名归一（旧 runtime-settings verbatim）', () => {
-  assert.deepEqual(provider.backends(), ['mimocode', 'mimo-desktop'])
-  for (const v of ['mimocode', 'mimo-code', 'CLI', 'mimo-cli', ' MiMoCode ']) {
-    assert.equal(provider.normalizeBackend(v), 'mimocode', 'normalizeBackend(' + String(v) + ')')
-  }
-  for (const v of ['mimo-desktop', 'desktop', 'mimo_desktop', 'Xiaomi-Mimo', 'xiaomi-mimo-desktop']) {
-    assert.equal(provider.normalizeBackend(v), 'mimo-desktop', 'normalizeBackend(' + String(v) + ')')
-  }
-  for (const v of ['bogus', '', null, undefined]) {
+test('单后端归一：backends() 恒 null，任何输入归一为 null', () => {
+  assert.equal(provider.backends(), null)
+  for (const v of ['mimocode', 'mimo-code', 'CLI', 'mimo-cli', ' MiMoCode ', 'mimo', 'MIMO', 'agy', '', null, undefined, 42, {}]) {
     assert.equal(provider.normalizeBackend(v), null, 'normalizeBackend(' + String(v) + ')')
   }
-})
-
-test('resolveBackend：arg > preferred > default（预选链）', () => {
-  assert.equal(provider.resolveBackend({ backend: 'desktop' }, null, 'mimocode'), 'mimo-desktop')
-  assert.equal(provider.resolveBackend({}, null, 'mimo-desktop'), 'mimo-desktop')
-  assert.equal(provider.resolveBackend({}, null, 'bogus'), 'mimocode')
-  assert.equal(provider.resolveBackend({}, null, null), 'mimocode')
-})
-
-test('delegates：仅 mimo-desktop 委托 provider.execute（Lead 定案 1）', () => {
-  assert.equal(provider.delegates('mimo-desktop'), true)
-  assert.equal(provider.delegates('mimocode'), false)
+  // resolveBackend 也恒 null（arg > preferred > default 链条整体作废）。
+  assert.equal(provider.resolveBackend({ backend: 'mimocode' }, null, 'mimocode'), null)
+  assert.equal(provider.resolveBackend({}, {}, null), null)
+  assert.equal(provider.resolveBackend(null, null, null), null)
 })
 
 // ── buildArgv（旧 core L213-241 verbatim）────────────────────────────────────
 test('buildArgv mimocode 基础旗标：run + --format json + 免提示 + 默认 build', () => {
-  const b = provider.buildArgv('mimo', { prompt: 'do it' }, { planActive: false, backend: 'mimocode' })
+  const b = provider.buildArgv('mimo', { prompt: 'do it' }, { planActive: false })
   assert.deepEqual(b.argv.slice(0, 5), ['mimo', 'run', 'do it', '--format', 'json'])
   assert.ok(b.argv.includes('--dangerously-skip-permissions'))
   assert.equal(b.argv[b.argv.indexOf('--agent') + 1], 'build')
@@ -59,10 +55,10 @@ test('buildArgv mimocode 基础旗标：run + --format json + 免提示 + 默认
 })
 
 test('buildArgv auto 跟随 DSH plan 态；accept-edits 映射 build', () => {
-  const planB = provider.buildArgv('mimo', { prompt: 'x' }, { planActive: true, backend: 'mimocode' })
+  const planB = provider.buildArgv('mimo', { prompt: 'x' }, { planActive: true })
   assert.equal(planB.argv[planB.argv.indexOf('--agent') + 1], 'plan')
   assert.equal(planB.mode, 'plan')
-  const b = provider.buildArgv('mimo', { prompt: 'x', mode: 'accept-edits' }, { backend: 'mimocode' })
+  const b = provider.buildArgv('mimo', { prompt: 'x', mode: 'accept-edits' }, {})
   assert.ok(b.argv.join(' ').includes('--agent build'))
 })
 
@@ -70,7 +66,7 @@ test('buildArgv 全旗标组合：--model/--variant/--dir/--session/--title 顺�
   const b = provider.buildArgv(['mimo'], {
     prompt: 'p', mode: 'plan', model: 'mimo/mimo', effort: 'low',
     cwd: 'C:\\x', sessionId: 'ses_1', title: 'T', timeoutSec: 90
-  }, { backend: 'mimocode' })
+  }, {})
   const argv = b.argv
   assert.equal(argv[0], 'mimo')
   assert.deepEqual(argv.slice(1, 4), ['run', 'p', '--format'])
@@ -85,28 +81,170 @@ test('buildArgv 全旗标组合：--model/--variant/--dir/--session/--title 顺�
 })
 
 test('buildArgv effort 映射：high→high、medium 不发 --variant（旧语义）', () => {
-  assert.ok(!provider.buildArgv('mimo', { prompt: 'x', effort: 'medium' }, { backend: 'mimocode' }).argv.includes('--variant'))
-  const hi = provider.buildArgv('mimo', { prompt: 'x', effort: 'high' }, { backend: 'mimocode' }).argv
+  assert.ok(!provider.buildArgv('mimo', { prompt: 'x', effort: 'medium' }, {}).argv.includes('--variant'))
+  const hi = provider.buildArgv('mimo', { prompt: 'x', effort: 'high' }, {}).argv
   assert.equal(hi[hi.indexOf('--variant') + 1], 'high')
 })
 
 test('buildArgv continueLatest → --continue', () => {
-  assert.ok(provider.buildArgv('mimo', { prompt: 'x', continueLatest: true }, { backend: 'mimocode' }).argv.includes('--continue'))
+  assert.ok(provider.buildArgv('mimo', { prompt: 'x', continueLatest: true }, {}).argv.includes('--continue'))
 })
 
 test('buildArgv timeoutSec 夹取（10..3600，默认 600）', () => {
   const cases = [[undefined, 600], [5, 10], [99999, 3600], ['42.7', 42], ['abc', 600], [0, 10]]
   for (const [input, want] of cases) {
-    const b = provider.buildArgv('mimo', { prompt: 'x', timeoutSec: input }, { backend: 'mimocode' })
+    const b = provider.buildArgv('mimo', { prompt: 'x', timeoutSec: input }, {})
     assert.equal(b.timeoutSec, want, 'timeoutSec(' + String(input) + ')')
   }
 })
 
-test('buildArgv mimo-desktop：空壳 argv（非 spawn 路径，交 execute）', () => {
-  const b = provider.buildArgv('mimo', { prompt: 'x' }, { backend: 'mimo-desktop' })
-  assert.deepEqual(b.argv, [])
-  assert.equal(b.mode, 'auto')
-  assert.equal(b.timeoutSec, 600)
+// ── defaultModel（用户定案：模型在设置里手动指定，不写死默认值）─────────────────
+test('buildArgv：未指定模型时不落地 --model（用户要求：由 mimo CLI 自身默认决定）', () => {
+  const b = provider.buildArgv('mimo', { prompt: 'x' }, {})
+  assert.ok(!b.argv.includes('--model'), 'no --model when nothing is configured')
+})
+
+test('buildArgv：显式 args.model 落地 --model', () => {
+  const b = provider.buildArgv('mimo', { prompt: 'x', model: 'xiaomi/mimo-v2.6-flash' }, {})
+  assert.equal(b.argv[b.argv.indexOf('--model') + 1], 'xiaomi/mimo-v2.6-flash')
+})
+
+test('buildArgv：opts.defaultModel 落地 --model（面板默认模型注入通道）', () => {
+  const b = provider.buildArgv('mimo', { prompt: 'x' }, { defaultModel: 'xiaomi/mimo-v2.6-pro' })
+  assert.equal(b.argv[b.argv.indexOf('--model') + 1], 'xiaomi/mimo-v2.6-pro')
+})
+
+test('buildArgv：opts.settings.defaultModel 也生效（宿主经 getSettings 的等价形态）', () => {
+  const b = provider.buildArgv('mimo', { prompt: 'x' }, { settings: { defaultModel: 'xiaomi/mimo-v2.6-pro-ultraspeed' } })
+  assert.equal(b.argv[b.argv.indexOf('--model') + 1], 'xiaomi/mimo-v2.6-pro-ultraspeed')
+})
+
+test('buildArgv：args.model 压过 opts.defaultModel（显式调用优先）', () => {
+  const b = provider.buildArgv('mimo', { prompt: 'x', model: 'xiaomi/from-arg' }, { defaultModel: 'xiaomi/from-settings' })
+  assert.equal(b.argv[b.argv.indexOf('--model') + 1], 'xiaomi/from-arg')
+})
+
+test('buildArgv：空串/纯空白的 model 与 defaultModel 一律不落地 --model', () => {
+  for (const args of [{ prompt: 'x', model: '' }, { prompt: 'x', model: '   ' }, { prompt: 'x', model: null }]) {
+    assert.ok(!provider.buildArgv('mimo', args, {}).argv.includes('--model'), JSON.stringify(args))
+  }
+  for (const opts of [{ defaultModel: '' }, { defaultModel: '   ' }, { defaultModel: null }, { settings: {} }, { settings: { defaultModel: '' } }]) {
+    assert.ok(!provider.buildArgv('mimo', { prompt: 'x' }, opts).argv.includes('--model'), JSON.stringify(opts))
+  }
+})
+
+test('attach 后 getSettings 注入的 defaultModel 实时生效（改面板无需重启）', () => {
+  let panelModel = ''
+  const p = defineProvider({ env: {} })
+  p.attach({ getSettings: () => ({ defaultModel: panelModel }), publish: () => {} })
+  // attach 时面板为空 → 不落地。
+  assert.ok(!p.buildArgv('mimo', { prompt: 'x' }, {}).argv.includes('--model'))
+  // 面板改默认模型 → 下一次 buildArgv 立即读到（每次调用重读 settingsRef）。
+  panelModel = 'xiaomi/mimo-v2.6-flash'
+  assert.equal(p.buildArgv('mimo', { prompt: 'x' }, {}).argv[p.buildArgv('mimo', { prompt: 'x' }, {}).argv.indexOf('--model') + 1], 'xiaomi/mimo-v2.6-flash')
+  // 面板再清空 → 重新不落地（不被 attach 时的初值钉死）。
+  panelModel = ''
+  assert.ok(!p.buildArgv('mimo', { prompt: 'x' }, {}).argv.includes('--model'))
+})
+
+// ── parseMimoModels（`mimo models` 实测输出；设置面板下拉数据源）──────────────
+test('parseMimoModels：真实输出格式（中文破折号 + 逗号描述）逐字段切分', () => {
+  const out = parseMimoModels([
+    'Available models:',
+    'xiaomi/mimo-v2.6-flash — window 1.05M, compacts at 944K',
+    'xiaomi/mimo-v2.6-pro — window 1.05M, compacts at 944K',
+    'xiaomi/mimo-v2.6-pro-ultraspeed — window 1.05M, compacts at 944K'
+  ].join('\n'))
+  assert.deepEqual(out.map((m) => m.id), ['xiaomi/mimo-v2.6-flash', 'xiaomi/mimo-v2.6-pro', 'xiaomi/mimo-v2.6-pro-ultraspeed'])
+  assert.deepEqual(out[0], { id: 'xiaomi/mimo-v2.6-flash', provider: 'xiaomi', name: 'mimo-v2.6-flash', note: 'window 1.05M, compacts at 944K' })
+  // 模型名自身含多个连字符，必须整体保留为 name（不按连字符再切）。
+  assert.equal(out[2].name, 'mimo-v2.6-pro-ultraspeed')
+  assert.equal(out[2].note, 'window 1.05M, compacts at 944K')
+})
+
+test('parseMimoModels：短横破折号 U+2013 与列表记号（• -）同样兼容', () => {
+  const out = parseMimoModels([
+    '• xiaomi/mimo-v2.6-flash – window 1.05M',
+    '- xiaomi/mimo-v2.6-pro | window 1.05M'
+  ].join('\n'))
+  assert.deepEqual(out.map((m) => m.id), ['xiaomi/mimo-v2.6-flash', 'xiaomi/mimo-v2.6-pro'])
+  assert.equal(out[0].note, 'window 1.05M')
+  assert.equal(out[1].note, 'window 1.05M')
+})
+
+test('parseMimoModels：数字编号行首被整体丢弃（行首清洗只吃非字母数字前缀）', () => {
+  // 真实形态约束：行首清洗是 raw.replace(/^[^A-Za-z0-9]+/, '') —— '1. ' 里的 '1' 是
+  // 字母数字，清洗停在 '1. xiaomi/...'，随后的 '1' 被当成 provider 名、'.' 破坏
+  // provider/model 形态 → 整行不匹配被丢弃。这是已知边界：编号行必须在宿主侧先剥掉。
+  const out = parseMimoModels([
+    '1. xiaomi/mimo-v2.6-flash — window 1.05M',
+    '2. xiaomi/mimo-v2.6-pro — window 1.05M'
+  ].join('\n'))
+  assert.deepEqual(out, [], 'numbered lines are not silently mis-parsed — they are dropped')
+  // 无编号的同类行正常解析（证明不是整体坏掉）。
+  const clean = parseMimoModels([
+    'xiaomi/mimo-v2.6-flash — window 1.05M',
+    'xiaomi/mimo-v2.6-pro — window 1.05M'
+  ].join('\n'))
+  assert.deepEqual(clean.map((m) => m.id), ['xiaomi/mimo-v2.6-flash', 'xiaomi/mimo-v2.6-pro'])
+})
+
+test('parseMimoModels：模型名后无描述时 note 为空串；: 分隔同样兼容', () => {
+  const out = parseMimoModels('mimo/mimo-auto\nxiaomi/mimo-v2.6-flash: window 1.05M')
+  assert.deepEqual(out.map((m) => m.id), ['mimo/mimo-auto', 'xiaomi/mimo-v2.6-flash'])
+  assert.equal(out[0].note, '')
+  assert.equal(out[0].provider, 'mimo')
+  assert.equal(out[1].note, 'window 1.05M')
+})
+
+test('parseMimoModels：去重、丢表头/说明/空行；空与畸形输入返回空数组（不抛）', () => {
+  const out = parseMimoModels([
+    'xiaomi/mimo-v2.6-flash',
+    'xiaomi/mimo-v2.6-flash',
+    '',
+    '   ',
+    'Available models:',
+    'not a model',
+    'plain text without slash'
+  ].join('\n'))
+  assert.deepEqual(out.map((m) => m.id), ['xiaomi/mimo-v2.6-flash'])
+  assert.deepEqual(parseMimoModels(''), [])
+  assert.deepEqual(parseMimoModels(null), [])
+  assert.deepEqual(parseMimoModels(undefined), [])
+  assert.deepEqual(parseMimoModels(42), [])
+})
+
+test('fetchMimoModelsSync：探测失败（exit 非 0）返回空数组且不抛', () => {
+  // 真实 Node 宿主有 child_process：MIMO_BIN 指向不存在的 fixture → spawnSync 失败。
+  // 面板下拉必须退化为自由输入（空数组），绝不能因探测失败抛异常或伪造列表。
+  const out = fetchMimoModelsSync({ MIMO_BIN: join(tmpdir(), 'definitely-not-mimo-xyz.mjs') }, 2000)
+  assert.deepEqual(out, [])
+})
+
+test('fetchMimoModelsSync：超时夹紧到 1000..30000 且非法入参不抛', () => {
+  // clampInt(timeoutMs, 8000, 1000, 30000)：非法值一律回退默认 8000，绝不抛。
+  assert.doesNotThrow(() => fetchMimoModelsSync({}, 'abc'))
+  assert.doesNotThrow(() => fetchMimoModelsSync(null, null))
+  assert.doesNotThrow(() => fetchMimoModelsSync({}, -5))
+})
+
+test('settings.meta：defaultModel 是可自定义 select，探测失败不抛', () => {
+  // meta() 内部走 fetchMimoModelsSync —— CLI 不存在时 options 为空数组，
+  // 面板退化为自由输入（契约：探测失败绝不崩面板）。
+  const m = provider.settings.meta({ MIMO_BIN: join(tmpdir(), 'definitely-not-mimo-xyz.mjs') })
+  assert.equal(m.titleSuffix, 'MiMo')
+  assert.deepEqual(m.fields.map((f) => f.key), ['defaultModel'])
+  assert.equal(m.fields[0].type, 'select')
+  assert.equal(m.fields[0].allowCustom, true)
+  assert.deepEqual(m.fields[0].options, [])
+  assert.match(m.fields[0].note, /未能读取模型列表/)
+  assert.doesNotThrow(() => provider.settings.meta({}))
+})
+
+test('settings.meta：MIMO_BIN 指向假 CLI 时 options 来自实测输出', () => {
+  const m = provider.settings.meta({ MIMO_BIN: FIX('fake-mimo-models.mjs') })
+  assert.deepEqual(m.fields[0].options.map((o) => o.value), ['xiaomi/mimo-v2.6-flash', 'xiaomi/mimo-v2.6-pro'])
+  assert.match(m.fields[0].note, /共 2 个可用模型/)
 })
 
 // ── parseJson / buildResult（旧 core verbatim）───────────────────────────────
@@ -130,7 +268,8 @@ test('buildResult：成功 SUCCESS；error → failed + errorName；accepted 无
   const err = provider.buildResult(provider.parseJson('{"type":"error","sessionID":"ses_e","error":{"name":"UnknownError","data":{"message":"boom"}}}'), { exitCode: 1 }, 'build', '', '', 'mimocode')
   assert.equal(err.ok, false)
   assert.equal(err.status, 'UnknownError')
-  const acc = provider.buildResult({ text: '', sessionId: 's', accepted: true }, { exitCode: 0 }, 'auto', '', '', 'mimo-desktop')
+  // ACCEPTED 成功态集合逐字保留（去 desktop 化后不再产生，但契约 §1 语义不变）。
+  const acc = provider.buildResult({ text: '', sessionId: 's', accepted: true }, { exitCode: 0 }, 'auto', '', '', 'mimocode')
   assert.equal(acc.ok, true)
   assert.equal(acc.status, 'ACCEPTED')
 })
@@ -153,119 +292,113 @@ test('isLimited：MiMo 免费 API/登录/第三方文案命中；普通异常不
   assert.equal(provider.isLimited({ ok: true, status: 'SUCCESS' }), false)
 })
 
-test('failureHint：MIMO_UNAVAILABLE / DESKTOP_UNREACHABLE / SESSION_NOT_CREATED / free-API 中文指引', () => {
+// ── failureHint（去 desktop 化后的三条诊断文案）──────────────────────────────
+test('failureHint：MIMO_UNAVAILABLE 指引安装/MIMO_BIN；free-API 指引登录与设置模型', () => {
   assert.match(provider.failureHint({ ok: false, status: 'MIMO_UNAVAILABLE' }), /MIMO_BIN/)
-  assert.match(provider.failureHint({ ok: false, status: 'DESKTOP_UNREACHABLE' }), /mimocode/)
-  assert.match(provider.failureHint({ ok: false, status: 'DESKTOP_SESSION_NOT_CREATED' }), /sessionId/)
-  assert.match(provider.failureHint({ ok: false, status: 'X', stderr: 'free API service has ended' }), /登录|第三方/)
+  assert.match(provider.failureHint({ ok: false, status: 'X', stderr: 'free API service has ended' }), /mimo auth login/)
+  assert.match(provider.failureHint({ ok: false, status: 'X', stderr: 'free API service has ended' }), /设置|默认模型/)
+  assert.match(provider.failureHint({ ok: false, status: 'X', errorMessage: '请先登录' }), /mimo auth login/)
+  assert.match(provider.failureHint({ ok: false, status: 'X', stderr: 'configure a third-party' }), /mimo auth login/)
   assert.equal(provider.failureHint({ ok: true }), '')
 })
 
-// ── preflight（契约 §9：dynamic 无 fetch / 无 fs 发现 → abort DESKTOP_UNREACHABLE）─
-test('preflight：mimocode 放行；desktop 沙箱（无 fs 发现）abort DESKTOP_UNREACHABLE 并提示 mimocode', () => {
-  assert.equal(provider.preflight({ backend: 'mimocode' }), null)
-  const pre = provider.preflight({ backend: 'mimo-desktop' })
-  assert.ok(pre && pre.abort, 'desktop must abort when api not discoverable (env {} + no nodeFs)')
-  assert.equal(pre.abort.status, 'DESKTOP_UNREACHABLE')
-  assert.match(pre.abort.errorMessage, /mimocode/)
-  assert.equal(pre.abort.backend, 'mimo-desktop')
+test('failureHint：模型不可用指引 `mimo models` 与默认模型设置', () => {
+  for (const msg of ['model not found', 'unknown model', 'no models available', 'invalid model', 'unknown provider']) {
+    const hint = provider.failureHint({ ok: false, status: 'ERROR', stderr: msg })
+    assert.match(hint, /mimo models/, 'hint must name `mimo models` for: ' + msg)
+    assert.match(hint, /默认模型|model 参数/, 'hint must point at settings/model arg')
+  }
+  // 无关失败 → 无诊断（不制造噪音）。
+  assert.equal(provider.failureHint({ ok: false, status: 'ERROR', stderr: 'SyntaxError: unexpected token' }), '')
 })
 
 // ── settings 分区（契约 §3）─────────────────────────────────────────────────
-test('settings.keys 是 preferredBackend/desktopModel（迁移由 keystone 做，Lead 定案 8）', () => {
-  assert.deepEqual(provider.settings.keys, ['preferredBackend', 'desktopModel'])
-  assert.deepEqual(provider.settings.defaults(), { preferredBackend: 'mimocode', desktopModel: 'mimo-auto' })
-  assert.deepEqual(provider.settings.normalize({ preferredBackend: 'desktop', desktopModel: '  mimo-pro  ', junk: 1 }), { preferredBackend: 'mimo-desktop', desktopModel: 'mimo-pro' })
-  assert.deepEqual(provider.settings.normalize({ preferredBackend: 'bogus' }), { preferredBackend: 'mimocode', desktopModel: 'mimo-auto' })
+test('settings.keys 是 defaultModel（用户手动指定模型；不写死默认值）', () => {
+  assert.deepEqual(provider.settings.keys, ['defaultModel'])
+  assert.deepEqual(provider.settings.defaults(), { defaultModel: '' })
+  assert.deepEqual(provider.settings.normalize({ defaultModel: '  xiaomi/mimo-v2.6-flash  ', junk: 1, updatedAt: 123 }), { defaultModel: 'xiaomi/mimo-v2.6-flash' })
+  // 缺失/非字符串/纯空白 → 空串（不传 --model，交 mimo CLI 自决）。
+  assert.deepEqual(provider.settings.normalize({}), { defaultModel: '' })
+  assert.deepEqual(provider.settings.normalize({ defaultModel: '   ' }), { defaultModel: '' })
+  assert.deepEqual(provider.settings.normalize({ defaultModel: 42 }), { defaultModel: '' })
+  assert.deepEqual(provider.settings.normalize(null), { defaultModel: '' })
 })
 
-test('settings.meta：titleSuffix MiMo + select/text 字段（GUI 渲染契约）', () => {
+test('settings.meta：defaultModel 是可自定义 select，探测失败退化为空 options 不抛', () => {
   const m = provider.settings.meta()
   assert.equal(m.titleSuffix, 'MiMo')
-  const keys = m.fields.map((f) => f.key)
-  assert.deepEqual(keys, ['preferredBackend', 'desktopModel'])
+  assert.deepEqual(m.fields.map((f) => f.key), ['defaultModel'])
   assert.equal(m.fields[0].type, 'select')
-  assert.equal(m.fields[1].type, 'text')
+  assert.equal(m.fields[0].allowCustom, true)
+  assert.ok(Array.isArray(m.fields[0].options), 'options must be an array')
+  assert.match(m.fields[0].placeholder, /留空/)
+  // CLI 未安装/未登录 → 探测失败退化为空 options，面板仍可自由输入（严禁抛异常）。
+  const noCli = provider.settings.meta({ MIMO_BIN: join(tmpdir(), 'definitely-not-mimo-xyz.mjs') })
+  assert.deepEqual(noCli.fields[0].options, [])
+  assert.match(noCli.fields[0].note, /未能读取模型列表/)
+  assert.doesNotThrow(() => provider.settings.meta({}))
 })
 
-test('settings.diagnose 同步返回字符串（无 fetch → 空串）', () => {
-  const d = provider.settings.diagnose({ preferredBackend: 'mimocode' })
-  assert.equal(typeof d, 'string')
+test('settings.diagnose：模型与 exe 来源同步可见（未设置模型须明示不传 --model）', () => {
+  assert.match(provider.settings.diagnose({ defaultModel: '' }, {}), /model=\(未设置/)
+  assert.match(provider.settings.diagnose({ defaultModel: 'xiaomi/mimo-v2.6-flash' }, {}), /model=xiaomi\/mimo-v2\.6-flash/)
+  assert.match(provider.settings.diagnose({}, { MIMO_BIN: 'C:/mimo.exe' }), /bin=env:C:\/mimo\.exe/)
+  assert.equal(typeof provider.settings.diagnose(null), 'string')
 })
 
-// ── mimo-desktop 回读回归锁（Lead：delivered = accepted && verified !== false）─
-test('desktopSendTurn：202 但会话列表无该 id → delivered=false（实测事故回归锁）', async () => {
-  const routes = []
-  const prev = globalThis.fetch
-  globalThis.fetch = async (url, init) => {
-    const u = String(url)
-    routes.push({ u, method: init && init.method })
-    let body = '{}'
-    if (u.includes('/v1/health')) body = '{"ok":true}'
-    else if (u.includes('/turns')) body = '{"ok":true}'
-    else if (u.includes('/v1/sessions')) body = JSON.stringify([{ id: 'ses_real_existing' }])
-    return { ok: true, status: u.includes('/turns') ? 202 : 200, text: async () => body }
-  }
-  const p = defineProvider({ env: { MIMO_DESKTOP_PORT: '59999', MIMO_DESKTOP_TOKEN: 'tok' } })
-  try {
-    const turn = await p._internals.desktopSendTurn('ses_invented', { prompt: 'x' })
-    assert.equal(turn.accepted, true)
-    assert.equal(turn.verified, false)
-    assert.equal(turn.delivered, false, 'invented id must NOT count as delivered')
-    const real = await p._internals.desktopSendTurn('ses_real_existing', { prompt: 'x' })
-    assert.equal(real.delivered, true, 'real id readback must deliver')
-  } finally {
-    if (prev) globalThis.fetch = prev; else delete globalThis.fetch
-  }
+// ── mimo_settings 附加工具（model 读写；写盘仅宿主有 nodeFs 时可用）──────────
+test('mimo_settings 读：无 model 入参 → 回显当前默认模型（不抛、不写盘）', async () => {
+  const v = await provider.extraTools[0].logic({})
+  assert.equal(v.ok, true)
+  assert.equal(v.defaultModel, '')
+  assert.match(v.effective, /不传 --model/)
+  assert.match(v.note, /mimo models/)
+  const rendered = provider.extraTools[0].render(v)[0].text
+  assert.match(rendered, /mimo settings/)
+  assert.match(rendered, /default model  : \(unset/)
 })
 
-test('desktop execute（mock fetch）：真 id 无事件 → ACCEPTED；自造 id → DESKTOP_SESSION_NOT_CREATED', async () => {
-  const prev = globalThis.fetch
-  const sessionsList = [{ id: 'ses_desktop_real' }]
-  globalThis.fetch = async (url, init) => {
-    const u = String(url)
-    let body = '{}'
-    let status = 200
-    if (u.includes('/v1/health')) body = '{"ok":true}'
-    else if (u.includes('/turns')) { status = 202; body = '{"ok":true}' }
-    else if (u.includes('/v1/sessions?')) body = JSON.stringify(sessionsList)
-    else if (u.includes('/events')) body = '{"type":"text","text":""}'
-    return { ok: status < 300, status, text: async () => body }
-  }
-  const p = defineProvider({ env: { MIMO_DESKTOP_PORT: '59999', MIMO_DESKTOP_TOKEN: 'tok' } })
-  try {
-    const resReal = await p.execute({ args: { prompt: 'hi', sessionId: 'ses_desktop_real' }, cwd: 'C:\\w', built: { argv: [], mode: 'auto', timeoutSec: 600 }, backend: 'mimo-desktop' })
-    assert.equal(resReal.ok, true)
-    assert.equal(resReal.status, 'ACCEPTED')
-    assert.equal(resReal.backend, 'mimo-desktop')
-    const resFake = await p.execute({ args: { prompt: 'hi', sessionId: 'ses_never_exists' }, cwd: 'C:\\w', built: { argv: [], mode: 'auto', timeoutSec: 600 }, backend: 'mimo-desktop' })
-    assert.equal(resFake.ok, false)
-    assert.equal(resFake.status, 'DESKTOP_SESSION_NOT_CREATED')
-    assert.match(resFake.errorMessage, /会话/)
-  } finally {
-    if (prev) globalThis.fetch = prev; else delete globalThis.fetch
-  }
+test('mimo_settings 写：model 入参在无 fs 宿主只回显不落盘（saved=false）', async () => {
+  const v = await provider.extraTools[0].logic({ model: 'xiaomi/mimo-v2.6-flash' })
+  assert.equal(v.ok, true)
+  assert.equal(v.defaultModel, 'xiaomi/mimo-v2.6-flash')
+  assert.match(v.effective, /settings:xiaomi\/mimo-v2\.6-flash/)
+  assert.equal(v.saved, false, 'no nodeFs injected → echo only, never pretend to persist')
+  assert.match(v.note, /mimo models/)
 })
 
-test('desktop execute：health 失败 → DESKTOP_UNAVAILABLE，不抛', async () => {
-  const prev = globalThis.fetch
-  globalThis.fetch = async () => { throw new Error('ECONNREFUSED') }
-  const p = defineProvider({ env: { MIMO_DESKTOP_PORT: '59998', MIMO_DESKTOP_TOKEN: 'tok' } })
-  try {
-    const res = await p.execute({ args: { prompt: 'hi' }, cwd: 'C:\\w', built: { argv: [], mode: 'auto', timeoutSec: 600 }, backend: 'mimo-desktop' })
-    assert.equal(res.ok, false)
-    assert.equal(res.status, 'DESKTOP_UNAVAILABLE')
-  } finally {
-    if (prev) globalThis.fetch = prev; else delete globalThis.fetch
-  }
+test('mimo_settings schema 只有 model 入参（旧 backend/桌面模型语义已删除）', () => {
+  const props = provider.extraTools[0].inputSchema.properties
+  assert.deepEqual(Object.keys(props), ['model'])
+  assert.match(provider.extraTools[0].description, /default mimo model/)
 })
 
+// ── _internals 纯函数面（测试/宿主可用）─────────────────────────────────────
 test('_internals 暴露纯函数面（测试/宿主可用）', () => {
   const I = provider._internals
-  assert.deepEqual(I.BACKENDS, ['mimocode', 'mimo-desktop'])
   assert.equal(typeof I.parseMimoJson, 'function')
-  assert.equal(typeof I.buildDesktopTurnBody, 'function')
-  const body = I.buildDesktopTurnBody({ prompt: 'm', model: 'mimo-auto', cwd: 'C:\\w' })
-  assert.deepEqual(body, { message: 'm', model: 'mimo-auto', directory: 'C:\\w' })
-  assert.match(I.newDesktopSessionId(), /^ses_[a-z0-9]{18}$/)
+  assert.equal(typeof I.buildResult, 'function')
+  assert.equal(typeof I.mimoCandidateExePaths, 'function')
+  assert.equal(typeof I.resolveMimoExePrefix, 'function')
+  assert.equal(typeof I.parseMimoModels, 'function')
+  assert.equal(typeof I.fetchMimoModelsSync, 'function')
+  assert.equal(typeof I.currentSettings, 'function')
+  assert.equal(typeof I.liveSettings, 'function')
+  assert.equal(typeof I.writePartition, 'function')
+  assert.ok(I.MIMO_LIMIT_RE instanceof RegExp)
+})
+
+test('_internals.mimoCandidateExePaths：空 env 返回空数组（不炸）', () => {
+  assert.deepEqual(provider._internals.mimoCandidateExePaths({}), [])
+})
+
+test('_internals.resolveMimoExePrefix：env MIMO_BIN 优先，.mjs 经 node 包装', () => {
+  assert.deepEqual(provider._internals.resolveMimoExePrefix({ MIMO_BIN: 'C:/custom/mimo.exe' }, ''), ['C:/custom/mimo.exe'])
+  const p = provider._internals.resolveMimoExePrefix({}, 'C:/fake/fake-mimo.mjs')
+  assert.equal(p.length, 2)
+  assert.equal(p[1], 'C:/fake/fake-mimo.mjs')
+  // 无 env 无 binPath → 退回二进制名。
+  const fallback = provider._internals.resolveMimoExePrefix({}, '')
+  assert.ok(Array.isArray(fallback) && fallback.length === 1)
+  assert.equal(typeof fallback[0], 'string')
 })

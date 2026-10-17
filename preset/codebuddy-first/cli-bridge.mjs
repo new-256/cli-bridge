@@ -178,6 +178,18 @@ export function apply(ctx, config) {
   }
   for (const tool of [runTool, continueTool, statusTool]) ctx.tools.register(tool)
 
+  // 附加工具（codebuddy_models）：描述符按宿主能力条件注册（preset 形态有 process
+  // 与 subprocess → 恒有）；dynamic 沙箱形态省略。注册逻辑与 opencode/agy 同构。
+  for (const et of provider.extraTools || []) {
+    ctx.effect(() => ctx.tools.register({
+      name: et.name,
+      description: et.description,
+      parameters: et.inputSchema,
+      output: { schema: OUTPUT_SCHEMA, render: et.render || ((args, value) => renderResult(value, provider)) },
+      execute: (args, exec) => et.logic(args, exec)
+    }))
+  }
+
   // 提示词策略段（旧 preset verbatim：name 'codebuddy:policy'，order 5，
   // POLICY_TEXT 全文在 providers/codebuddy.mjs —— 提示词连续性红线）。
   ctx.effect(() => ctx.systemPrompt.section({

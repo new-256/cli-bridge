@@ -73,11 +73,12 @@ test('模块导出契约：name/inject/apply', () => {
   assert.equal(typeof apply, 'function')
 })
 
-test('apply 注册 3 工具（无 quota）+ codebuddy:policy 段 + 心跳/租约/dispose', async () => {
+test('apply 注册 3 工具 + codebuddy_models + codebuddy:policy 段 + 心跳/租约/dispose', async () => {
   await withEnv(pinEnv(), async () => {
     const m = mkCtx()
     apply(m.ctx)
-    assert.deepEqual(m.registered.map((t) => t.name), ['codebuddy_run', 'codebuddy_continue', 'codebuddy_status'])
+    // 新增第四件 codebuddy_models（模型清单）；前三件名与顺序是 verbatim 红线。
+    assert.deepEqual(m.registered.map((t) => t.name), ['codebuddy_run', 'codebuddy_continue', 'codebuddy_status', 'codebuddy_models'])
     for (const t of m.registered) {
       assert.equal(t.parameters.type, 'object')
       assert.equal(typeof t.execute, 'function')

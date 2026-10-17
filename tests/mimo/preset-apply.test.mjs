@@ -3,6 +3,7 @@
 // mimo/status 发布、mimo:policy 段、前台执行路（fake exe）、后台 jobs 路、
 // mimo_settings 临时 home 写盘回读、mimo 专属 LIMIT_RE 文案渲染。
 // 设置文件恒指向不存在的临时路径（防读到本机真实 DSH_HOME 分区 → 测试不确定）。
+// 2026-10 去 desktop 化：单后端（本地 mimo CLI），模型由设置里 defaultModel 指定。
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
@@ -60,7 +61,7 @@ function mkCtx() {
 }
 
 // 关键纪律：async 版 withEnv —— 同步版会在 fn 的第一个 await 处提前还原 env，
-// 测试中后段就会读到本机真实 DSH_HOME 分区（曾因此把 mimo-desktop 误当预选）。
+// 测试中后段就会读到本机真实 DSH_HOME 分区（设置漂移 → 测试不确定）。
 async function withEnv(vars, fn) {
   const prev = {}
   for (const k of Object.keys(vars)) { prev[k] = process.env[k]; if (vars[k] === null) delete process.env[k]; else process.env[k] = vars[k] }
@@ -93,13 +94,21 @@ test('apply 注册 4 工具（3 件套 + mimo_settings）并挂 mimo:policy 与�
       assert.ok(mode.length >= 1, 'mode announced')
       assert.equal(mode[0].payload.active, true)
       assert.equal(mode[0].payload.sessionId, 'sess-1')
+      // 单后端：payload 不再带 backend 字段（去 desktop 化）。
+      assert.ok(!('backend' in mode[0].payload), 'mode payload carries no backend field')
       assert.ok(m.timers.some((t) => t.ms === 30000), '30s heartbeat interval registered')
       // policy 段
       assert.equal(m.sections.length, 1)
       assert.equal(m.sections[0].name, 'mimo:policy')
       assert.equal(m.sections[0].order, 2810)
       assert.match(m.sections[0].text, /mimo-first execution policy/)
-      assert.match(m.sections[0].text, /mimo-desktop/)
+      // 去 desktop 化后的新指引：模型在设置里指定 + mimo auth login 登录。
+      assert.match(m.sections[0].text, /model is chosen in the CLI Bridge settings panel/)
+      assert.match(m.sections[0].text, /mimo auth login/)
+      assert.match(m.sections[0].text, /free API service has ENDED/)
+      assert.match(m.sections[0].text, /mimo models/)
+      // 旧的双后端选择段必须已消失。
+      assert.ok(!/backend\s*=\s*mimocode/.test(m.sections[0].text), 'no dual-backend selection line')
     })
   } finally { try { rmSync(home, { recursive: true, force: true }) } catch (e) {} }
 })
@@ -114,7 +123,8 @@ test('mimo_run 前台（background=false）走 fake-mimo fixture → SUCCESS + s
       const res = await run.execute({ prompt: 'seed', background: false }, EXEC)
       assert.equal(res.ok, true)
       assert.equal(res.status, 'SUCCESS')
-      assert.equal(res.backend, 'mimocode')
+      // 单后端：结果不再带 backend 标识（去 desktop 化后 backend 恒 null）。
+      assert.equal(res.backend, null)
       assert.equal(res.sessionId, 'ses_fake_1')
       assert.match(m.spawnLog[0].join(' '), /--format json/)
       const out = run.output.render({ prompt: 'seed' }, res)
@@ -194,17 +204,68 @@ test('mimo_settings 在 preset 宿主有 nodeFs → saved 写盘 + 读回（临�
       const m = mkCtx()
       apply(m.ctx)
       const settings = m.registered.find((t) => t.name === 'mimo_settings')
-      const v = await settings.execute({ backend: 'mimo-desktop' }, undefined)
+      // 去 desktop 化：入参只有 model（provider/model），落 defaultModel 单一键。
+      const v = await settings.execute({ model: 'xiaomi/mimo-v2.6-flash' }, undefined)
       assert.equal(v.ok, true)
-      assert.equal(v.fileBackend, 'mimo-desktop')
+      assert.equal(v.defaultModel, 'xiaomi/mimo-v2.6-flash')
       assert.equal(v.saved, true, 'preset form persists via nodeFs')
       const file = join(home, 'cli-bridge-settings.json')
       const all = JSON.parse(readFileSync(file, 'utf8'))
-      assert.equal(all.mimo.preferredBackend, 'mimo-desktop')
+      assert.equal(all.mimo.defaultModel, 'xiaomi/mimo-v2.6-flash')
+      assert.deepEqual(Object.keys(all.mimo), ['defaultModel'])
       // 渲染面（renderSettings 旧行 verbatim）
       const out = settings.output.render({}, v)
       assert.match(out[0].text, /mimo settings/)
-      assert.match(out[0].text, /file backend   : mimo-desktop/)
+      assert.match(out[0].text, /default model  : xiaomi\/mimo-v2\.6-flash/)
+      assert.match(out[0].text, /saved          : yes/)
+    })
+  } finally { try { rmSync(home, { recursive: true, force: true }) } catch (e) {} }
+})
+
+test('mimo_settings 读：无入参 → 回显未设置（不传 --model），不写盘', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'cli-bridge-mimo-set-'))
+  try {
+    await withEnv({ MIMO_BIN: FIX('fake-mimo.mjs'), CLI_BRIDGE_SETTINGS_FILE: join(home, 'nope.json'), DSH_HOME: home }, async () => {
+      const m = mkCtx()
+      apply(m.ctx)
+      const settings = m.registered.find((t) => t.name === 'mimo_settings')
+      const v = await settings.execute({}, undefined)
+      assert.equal(v.ok, true)
+      assert.equal(v.defaultModel, '')
+      assert.equal(v.saved, false, 'no model arg → nothing written')
+      assert.match(v.effective, /不传 --model/)
+      const out = settings.output.render({}, v)
+      assert.match(out[0].text, /default model  : \(unset/)
+    })
+  } finally { try { rmSync(home, { recursive: true, force: true }) } catch (e) {} }
+})
+
+test('mimo_run 前台：设置分区 defaultModel 落地 --model（spawn argv 校验）', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'cli-bridge-mimo-set-'))
+  try {
+    await withEnv({ MIMO_BIN: FIX('fake-mimo.mjs'), CLI_BRIDGE_SETTINGS_FILE: join(home, 'cli-bridge-settings.json'), DSH_HOME: null }, async () => {
+      const m = mkCtx()
+      apply(m.ctx)
+      const settings = m.registered.find((t) => t.name === 'mimo_settings')
+      await settings.execute({ model: 'xiaomi/mimo-v2.6-flash' }, undefined)
+      const run = m.registered.find((t) => t.name === 'mimo_run')
+      const res = await run.execute({ prompt: 'seed', background: false }, EXEC)
+      assert.equal(res.ok, true)
+      assert.ok(m.spawnLog[0].includes('--model') && m.spawnLog[0].includes('xiaomi/mimo-v2.6-flash'), JSON.stringify(m.spawnLog[0]))
+    })
+  } finally { try { rmSync(home, { recursive: true, force: true }) } catch (e) {} }
+})
+
+test('mimo_run 前台：无默认模型 → spawn argv 不含 --model', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'cli-bridge-mimo-t-'))
+  try {
+    await withEnv({ MIMO_BIN: FIX('fake-mimo.mjs'), CLI_BRIDGE_SETTINGS_FILE: join(home, 'nope.json'), DSH_HOME: home }, async () => {
+      const m = mkCtx()
+      apply(m.ctx)
+      const run = m.registered.find((t) => t.name === 'mimo_run')
+      const res = await run.execute({ prompt: 'seed', background: false }, EXEC)
+      assert.equal(res.ok, true)
+      assert.ok(!m.spawnLog[0].includes('--model'), 'no default model → no --model: ' + JSON.stringify(m.spawnLog[0]))
     })
   } finally { try { rmSync(home, { recursive: true, force: true }) } catch (e) {} }
 })

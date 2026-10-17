@@ -12,7 +12,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import defineProvider from '../../providers/mimo.mjs'
+import defineProvider, { resolveMimoExePrefix } from '../../providers/mimo.mjs'
 import { renderResult, renderStatus } from '../../core/bridge-kit.mjs'
 import { isBridgeEnabled } from '../../core/scheduling.mjs'
 import { PROVIDER_IDS } from '../../providers/registry.mjs'
@@ -22,7 +22,6 @@ export const inject = ['tools', 'subprocess', 'systemPrompt', 'timer']
 
 const OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
 const SETTINGS_FILE_NAME = 'cli-bridge-settings.json'
-const BACKEND_DESKTOP = 'mimo-desktop'
 
 // 统一设置文件路径解析（与 home-plugin/lib/settings.mjs 同规则，本模块不 import keystone，
 // 只复刻只读逻辑）：CLI_BRIDGE_SETTINGS_FILE > DSH_HOME/<file>。解析不到 → null（回退默认）。
@@ -44,20 +43,10 @@ function readPartition(env) {
   }
 }
 
-// 旧 resolveMimoExe 候选链 verbatim（MIMO_BIN > MIMO_CLI > ~/.mimocode/bin/mimo[.exe]）。
-function mimoExeFromEnvCandidates(env) {
-  const candidates = []
-  if (env.MIMO_BIN) candidates.push(env.MIMO_BIN)
-  if (env.MIMO_CLI) candidates.push(env.MIMO_CLI)
-  if (env.USERPROFILE) candidates.push(env.USERPROFILE + '\\.mimocode\\bin\\mimo.exe')
-  if (env.HOME) {
-    candidates.push(env.HOME + '\\.mimocode\\bin\\mimo.exe')
-    candidates.push(env.HOME + '/.mimocode/bin/mimo')
-  }
-  for (const exe of candidates) {
-    try { if (exe && fs.existsSync(exe)) return exe } catch (e) { }
-  }
-  return null
+// 设置分区读取（descriptor 的 host.getSettings('mimo') 契约：直接返回分区对象
+// { defaultModel } 或空对象）。每次调用都重新读文件 —— 面板改默认模型后无需重启即生效。
+function settingsPartition(env) {
+  return readPartition(env).partition || {}
 }
 
 export function apply(ctx, config) {
@@ -70,13 +59,6 @@ export function apply(ctx, config) {
   const env = process.env
   const cfg = config || {}
 
-  // 预选链（旧 loadRuntime 语义）：config.backend > env > 统一设置文件。工具参数级在
-  // descriptor.resolveBackend 内处理（arg 优先），这里给 runner 的是「非 arg」的最高优先源。
-  function preferredBackend() {
-    const b = cfg.backend || env.MIMO_BRIDGE_BACKEND || env.MIMO_BACKEND || (readPartition(env).partition || {}).preferredBackend
-    return b || null
-  }
-
   const provider = defineProvider({
     process,
     env,
@@ -87,11 +69,9 @@ export function apply(ctx, config) {
   })
 
   // 状态快照 → 家级灯（keystone 听 'mimo/status'，事件是 app 级广播）。
-  // 附带 defaultBackend/backend 便利字段（旧 mimo/status payload，契约容忍额外键）。
   function publish(snapshot) {
     try {
-      const snap = Object.assign({ defaultBackend: preferredBackend() || provider.defaultBackend, backend: preferredBackend() || provider.defaultBackend }, snapshot)
-      ctx.emit('mimo/status', { snapshot: snap })
+      ctx.emit('mimo/status', { snapshot })
     } catch (e) { /* ignore */ }
   }
 
@@ -103,15 +83,17 @@ export function apply(ctx, config) {
     return process.cwd()
   }
 
-  // exe：mimo-desktop 走本地 HTTP 非 spawn → 返回占位 'mimo'（永不 throw，让 kit 落到
-  // delegates→execute）；mimocode 走 MIMO_BIN/MIMO_CLI > PATH 候选 > subprocess 查找（
-  // 找不到 throw → kit 发 MIMO_UNAVAILABLE + 回退弹窗）。
+  // exe 解析（与 descriptor 单一真源 resolveMimoExePrefix 同优先级）：
+  // MIMO_BIN > MIMO_CLI > 已知安装位置 ~/.mimocode/bin/mimo[.exe] > PATH 查找 mimo。
+  // .mjs/.cjs/.js 目标经 process.execPath 包装（供测试 fixture 使用）。
+  // 找不到 → throw → kit 发 MIMO_UNAVAILABLE + 回退弹窗。
   async function resolveExe(backend, signal) {
-    if (backend === BACKEND_DESKTOP) return 'mimo'
-    const fromCandidates = mimoExeFromEnvCandidates(env)
-    if (fromCandidates) {
-      if (/\.(mjs|cjs|js)$/i.test(fromCandidates)) return [process.execPath, fromCandidates]
-      return fromCandidates
+    const prefix = resolveMimoExePrefix(env)
+    if (prefix.length && prefix[0]) {
+      const head = String(prefix[0])
+      if (prefix.length > 1) return prefix
+      if (/\.(mjs|cjs|js)$/i.test(head)) return [process.execPath, head]
+      return head
     }
     return await subprocess.resolveExecutable('mimo', undefined, signal)
   }
@@ -133,18 +115,16 @@ export function apply(ctx, config) {
     resolveExe,
     getCwdFallback,
     planActiveFor,
-    getPreferredBackend: preferredBackend,
-    getSettings: () => (readPartition(env).partition || {}),
+    getSettings: () => settingsPartition(env),
     publish
   })
 
   // 宣告 mimo 优先模式：家级灯据此决定常驻显示（presetActive）。挂载即宣告 +
-  // 每 30s 心跳续租（TTL 75s，契约 §2）。旧 payload 带 backend，新契约要 sessionId；都带。
+  // 每 30s 心跳续租（TTL 75s，契约 §2）。payload 只带 active/sessionId。
   function announceMode() {
     try {
       const sid = (ctx.session && ctx.session.id) || ctx.sessionId || null
-      const bk = preferredBackend() || provider.defaultBackend
-      const payload = { active: true, backend: bk }
+      const payload = { active: true }
       if (sid) payload.sessionId = sid
       ctx.emit('mimo/mode', payload)
     } catch (e) { /* ignore */ }
@@ -194,13 +174,21 @@ export function apply(ctx, config) {
     }))
   }
 
-  // 旧 policy 文案 verbatim（契约 §8：提示词连续性，不许顺手改）。
+  // 提示词连续性（契约 §8）：决策表 / 上下文协议 / 回退协议三段保留旧语义；后端段与
+  // 模型段随「去 desktop 化 + 模型手动指定」重写（免费 API 已终止 + mimo auth login）。
   const policyText = [
-    'mimo-first execution policy (Xiaomi MiMo: MiMoCode CLI or MiMo Desktop client).',
+    'mimo-first execution policy (Xiaomi MiMo: MiMoCode CLI).',
     '',
-    'Local backends (selectable in settings: backend = mimocode | mimo-desktop):',
-    '- mimocode (default): local `mimo` CLI (MiMoCode). Full DSH control (--dangerously-skip-permissions, never prompts).',
-    '- mimo-desktop: Xiaomi MiMo Desktop client local API (running Desktop app; uses its login/model/session UI).',
+    'Local `mimo` CLI (MiMoCode) handles coding tasks under full DSH control (--dangerously-skip-permissions, never prompts).',
+    '',
+    'Model:',
+    '- The model is chosen in the CLI Bridge settings panel (provider/model form, e.g. xiaomi/mimo-v2.6-flash) — this bridge does not pick one.',
+    '- Leave the setting empty to pass no --model, letting the mimo CLI use its own default. A per-call `model` argument overrides the setting for that call only.',
+    '- List available models with `mimo models` on this machine.',
+    '',
+    'Credentials:',
+    "- Xiaomi MiMo's free API service has ENDED. The user must run `mimo auth login` (or configure a third-party API) on this machine before dispatch works.",
+    '- If a run fails with sign-in / free-API-ended errors, tell the user to log in. Do not retry in a loop.',
     '',
     'By default, dispatch runs in the background and returns a jobId immediately; collect via job_output and watch live progress via mimo_status.',
     '',
@@ -210,12 +198,6 @@ export function apply(ctx, config) {
     '- Follow-ups on the same topic -> mimo_continue (with latest=true or sessionId; context is preserved).',
     '- Final build/test verification of mimo output -> Native tools.',
     '- Plan / read-only analysis -> mimo_run with mode=plan.',
-    '- Desktop-native work (Desktop session UI, shared Desktop login/model) -> prefer backend=mimo-desktop (or preselect it in settings).',
-    '',
-    'Backend preselection (settings):',
-    '- Default backend is configured OUT-OF-BAND (plugin config.backend / env MIMO_BRIDGE_BACKEND / settings file).',
-    '- Per-call `backend` argument overrides the default only when necessary.',
-    '- Do NOT invent a backend every call — use the preselected default.',
     '',
     'Context protocol (one topic = one mimo session):',
     '- First dispatch on a topic: compact CONTEXT preamble (point to paths, do not paste file contents).',

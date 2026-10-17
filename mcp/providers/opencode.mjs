@@ -14,13 +14,40 @@ import { resolve as resolvePath } from 'node:path'
 import defineProvider, { resolveExePrefix } from '../../providers/opencode.mjs'
 import { createStatusEngine, createLineStream, buildMcpBridgePayload, isLimited, renderStatus } from '../../core/bridge-kit.mjs'
 import { packageVersion } from '../version.mjs'
+import { readFileSync } from 'node:fs'
+import { dirname } from 'node:path'
 
 export const meta = { id: 'opencode', label: 'OPENCODE', version: packageVersion() }
+
+// ── 统一设置文件分区读（MCP 子进程无 ctx.get，只读 env/文件）───────────────────
+// 与 mimo/agy 面同规则。注入 descriptor 的 readSettings，使设置面板里指定的
+// binPath/defaultModel 在 MCP 形态同样生效（不只 preset 形态）—— 三个形态行为一致。
+const SETTINGS_FILE_NAME = 'cli-bridge-settings.json'
+function resolveSettingsFile(env) {
+  try {
+    if (env.CLI_BRIDGE_SETTINGS_FILE) return env.CLI_BRIDGE_SETTINGS_FILE
+    if (env.DSH_HOME) return resolvePath(env.DSH_HOME, SETTINGS_FILE_NAME)
+    if (process.platform === 'win32' && env.APPDATA) return resolvePath(env.APPDATA, 'DSH Desktop', 'dsh-home', SETTINGS_FILE_NAME)
+    if (env.HOME) return resolvePath(env.HOME, '.dsh', SETTINGS_FILE_NAME)
+  } catch (e) { }
+  return null
+}
+function readPartition(env) {
+  const p = resolveSettingsFile(env)
+  if (!p) return { partition: null, path: null, home: null }
+  try {
+    const all = JSON.parse(readFileSync(p, 'utf8'))
+    return { partition: (all && typeof all === 'object' && all.opencode) ? all.opencode : null, path: p, home: dirname(p) }
+  } catch (e) {
+    return { partition: null, path: p, home: dirname(p) }
+  }
+}
 
 const provider = defineProvider({
   env: process.env,
   process,
-  nodeChild: { spawn: nodeSpawn }
+  nodeChild: { spawn: nodeSpawn },
+  readSettings: () => readPartition(process.env)
 })
 
 let lastIo = null

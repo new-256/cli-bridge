@@ -346,6 +346,16 @@ const TOOLS = [
     name: 'codebuddy_status',
     description: 'Read a live snapshot of what the local codebuddy agent is currently doing. Returns one section per project (working directory): running count, the current step (tool name + arguments being executed, or thinking/typing), the recent step trail (tools executed, done/error), the last completed run status + session id, and per-project cumulative usage (runs + total tokens, since codebuddy exposes no quota API). Optional cwd filters to a single project. Call this to check on an in-flight codebuddy_run/codebuddy_continue without waiting for it to finish.',
     inputSchema: { type: 'object', properties: { cwd: { type: 'string', description: 'Optional: filter the snapshot to a single project (working directory).' } } }
+  },
+  {
+    // 第四件：模型清单（描述符 extraTools 的同源定义；工具名从描述符取，避免两处漂移）。
+    name: provider.extraTools && provider.extraTools[0] ? provider.extraTools[0].name : 'codebuddy_models',
+    description: provider.extraTools && provider.extraTools[0]
+      ? provider.extraTools[0].description
+      : 'List the models available to the local codebuddy CLI for a given backend.',
+    inputSchema: provider.extraTools && provider.extraTools[0]
+      ? provider.extraTools[0].inputSchema
+      : { type: 'object', properties: {} }
   }
 ]
 
@@ -358,6 +368,25 @@ export async function call(name, args, io) {
   if (!lastIo) return 'codebuddy error: MCP io not initialized'
   const a = args || {}
   if (name === 'codebuddy_status') return statusText(a.cwd)
+  if (name === 'codebuddy_models') {
+    const et = (provider.extraTools || []).find((t) => t.name === 'codebuddy_models')
+    if (!et) return 'codebuddy_models failed: tool not available in this host form'
+    let res
+    try { res = await et.logic(a) } catch (e) { return 'codebuddy_models failed: ' + String(e && e.message || e) }
+    if (!res || !res.ok) return 'codebuddy_models failed: ' + String((res && res.error) || 'unknown')
+    const list = res.models || []
+    if (!list.length) return 'codebuddy_models: no models matched (backend=' + (res.backend || '?') + ')'
+    const lines = ['codebuddy models [' + res.backend + '] (' + list.length + '):']
+    for (const m of list.slice(0, 40)) {
+      const flags = []
+      if (m.authorized) flags.push('authorized')
+      if (m.credits === 0) flags.push('free')
+      lines.push('  ' + m.id + (m.creditLabel ? '  ' + m.creditLabel : '') + (flags.length ? '  [' + flags.join(',') + ']' : ''))
+    }
+    if (list.length > 40) lines.push('  … and ' + (list.length - 40) + ' more')
+    lines.push('source: ' + (res.source || 'unknown'))
+    return lines.join('\n')
+  }
   if (!a.prompt || !String(a.prompt).trim()) return 'codebuddy error: prompt is required'
   const mapped = Object.assign({}, a)
   if (name === 'codebuddy_continue' && !mapped.sessionId && mapped.latest) mapped.continueLatest = true
@@ -379,7 +408,7 @@ export async function call(name, args, io) {
 export function check(env) {
   const ts = tools(env)
   const names = ts.map((t) => t.name)
-  for (const req of ['codebuddy_run', 'codebuddy_continue', 'codebuddy_status']) {
+  for (const req of ['codebuddy_run', 'codebuddy_continue', 'codebuddy_status', 'codebuddy_models']) {
     if (!names.includes(req)) throw new Error('codebuddy mcp: missing tool ' + req)
   }
   for (const t of ts) {

@@ -73,9 +73,10 @@ test('meta 契约形态', () => {
   assert.match(meta.version, /^\d+\.\d+\.\d+/, 'meta.version follows the package version')
 })
 
-test('tools(env) 三件套 + schema 合法 + check() 守卫通过', () => {
+test('tools(env) 三件套 + codebuddy_models + schema 合法 + check() 守卫通过', () => {
   const ts = tools({})
-  assert.deepEqual(ts.map((t) => t.name), ['codebuddy_run', 'codebuddy_continue', 'codebuddy_status'])
+  // 新增第四件 codebuddy_models（模型清单）；前三件是 verbatim 红线，名字与顺序不变。
+  assert.deepEqual(ts.map((t) => t.name), ['codebuddy_run', 'codebuddy_continue', 'codebuddy_status', 'codebuddy_models'])
   for (const t of ts) {
     assert.equal(t.inputSchema.type, 'object')
     assert.ok(t.description.length > 40)

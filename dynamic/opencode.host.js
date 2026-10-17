@@ -561,31 +561,22 @@ function createRunner(o) {
   return { coreExecute, runSync, askFallback }
 }
 
-// providers/opencode.mjs — opencode provider descriptor（第四家 CLI）。
+// providers/opencode.mjs — opencode provider descriptor（第四家 CLI，无旧包可迁）。
 //
-// 移植基线 = 本机实测的 OpenCode **V2** CLI（v2.0.29，桌面版自带二进制
-// opencode-cli.exe）+ 官方 CLI 源码 emit 全集。不是旧包（本包新增，无旧包可迁）。
-//
-// 实测事实（2026-10-15，CLI v2.0.29）：
-//   opencode run [message..]     非交互主命令；prompt 是【位置参数】（run 子命令无
-//                                --prompt；-p 是 --password，切勿当 prompt 用）
-//   --format json                NDJSON 事件流（每行一个 JSON 对象）
-//   --auto                       auto-approve 未显式拒绝的权限（不加会卡在权限提示）
-//   -m, --model provider/model   V2 支持 provider/model#variant
-//   --session <id> / --continue  会话续接（无 `opencode continue` 子命令）
-//   --agent / --title / --file / --thinking / --standalone
-//   ⚠️ V2 无 --dir（V1 有）→ cwd 只能靠 spawn 的工作目录
-//   ⚠️ V2 无 --variant（V1 有）→ variant 并入 --model 的 # 后缀
-//   退出码：0 成功 / 1 错误 / 130 SIGINT（退出码才是成败判据）
-//   事件 type（源码全集）：step_start / text / reasoning / tool_use / step_finish / error
-//   ⚠️ 不存在 result/complete/init 事件
-//   ⚠️ 文本在 part.text；统计在 step_finish.part（cost/tokens）——两者是不同事件
+// 基线 = 本机实测 OpenCode V2 CLI v2.0.29（桌面版自带 opencode-cli.exe）+ 源码 emit 全集。
+// 完整 CLI 事实表见 docs/HANDOVER.md §13；这里只留写代码时最容易踩的几条：
+//   • 非交互 = `opencode run "<prompt>"`，prompt 是【位置参数】（run 子命令无 --prompt；
+//     `-p` 是 --password）。`--format json` → NDJSON。`--auto` = 自动批准权限。
+//   • ⚠️ V2 无 --dir（cwd 靠 spawn）、无 --variant（并入 --model#variant）。
+//   • 退出码才是成败判据：0 成功 / 1 错误 / 130 SIGINT。
+//   • ⚠️ 无 result/complete/init 事件；type 全集 = step_start/text/reasoning/tool_use/
+//     step_finish/error。文本在 part.text，统计在 step_finish.part —— 两者是不同事件。
 //
 // 红线（PROVIDER-CONTRACT.md §8 + §1）：
 //  - 本文件会被 build 内联进 dynamic 沙箱（new Function）：绝不出现 import.meta 字面量；
 //    process 只经 deps 注入或 typeof 守卫读取；宿主能力全部走 deps/attach(hostOpts)。
 //  - 只允许 import '../core/bridge-kit.mjs'。
-
+// import { createStatusEngine, createRunner, clampInt, isLimited } from '../core/bridge-kit.mjs'
 function nowIso() { return new Date().toISOString() }
 
 // ── 可执行文件解析（env > 桌面版已知路径 > PATH）───────────────────────────────
@@ -771,16 +762,35 @@ function defineProvider (deps = {}) {
   let settingsRef = { binPath: '', defaultModel: '', defaultAgent: '' }
 
   /**
-   * 取当前生效的偏好设置（宿主经 hostOpts.getSettings 注入；无则退回 env/默认）。
+   * 取当前生效的偏好设置。三条来源按优先级合并，每次 buildArgv 都重新读 ——
+   * 面板改默认模型后无需重启即生效：
+   *   1) `host.getSettings('opencode')` —— preset/dynamic 形态（attach 时由宿主注入）；
+   *   2) `deps.readSettings()` —— MCP 形态（真 Node 进程，每次现读设置文件）；
+   *   3) `settingsRef` —— attach 时固化的一次性快照 / 缺省值。
+   * 三条都拿不到 → 缺省空值（= 不传 --model，交给 opencode 自身配置决定）。
+   *
+   * 历史坑：MCP 形态不 attach（自建 engine），只认 host.getSettings 会让面板设置的
+   * defaultModel 在 MCP 面对 opencode_run 完全失效 —— 只有 args.model 才落地。
+   * 三个形态行为不一致是缺陷，故此处统一把 readSettings 纳入（与 mimo 同构）。
    */
   function currentSettings() {
+    const out = Object.assign({}, settingsRef)
+    try {
+      if (typeof deps.readSettings === 'function') {
+        const r = deps.readSettings()
+        if (r && typeof r === 'object') {
+          const part = ('partition' in r || 'path' in r || 'home' in r) ? r.partition : r
+          if (part && typeof part === 'object') Object.assign(out, part)
+        }
+      }
+    } catch (e) { }
     try {
       if (host && typeof host.getSettings === 'function') {
         const s = host.getSettings('opencode')
-        if (s && typeof s === 'object') return Object.assign({}, settingsRef, s)
+        if (s && typeof s === 'object') Object.assign(out, s)
       }
     } catch (e) { }
-    return settingsRef
+    return out
   }
 
   const descriptor = {
