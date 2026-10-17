@@ -14,16 +14,15 @@
 //    process 只经 deps 注入或 typeof 守卫读取；宿主能力全部走 deps/attach(hostOpts)。
 //  - 只允许 import '../core/bridge-kit.mjs'。
 import { createStatusEngine, createRunner, clampInt, isLimited } from '../core/bridge-kit.mjs'
+import { candidateExePaths, EXE_BASENAMES } from './opencode-exe.mjs'
+export { candidateExePaths }
 
 function nowIso() { return new Date().toISOString() }
 
 // ── 可执行文件解析（env > 桌面版已知路径 > PATH）───────────────────────────────
 // 二进制名是 opencode-cli.exe（不是 opencode.exe）：V2 桌面版自带，且 V1/V2 不能并存
 // 安装（官方原话），故不做「opencode.exe 兜底」以免误命中另一个版本。
-const EXE_BASENAMES = ['opencode-cli', 'opencode']
 // 桌面版各版本目录形如 ...\ai.opencode.desktop\cli\<ver>-<arch>\opencode-cli.exe。
-// 沙箱内可能没有 fs —— 全部读取走 typeof 守卫，读不到就返回空数组（退回 PATH 查找）。
-const DESKTOP_CLI_REL = ['ai.opencode.desktop', 'cli']
 
 function schedBuiltin(name) {
   try {
@@ -36,47 +35,6 @@ function schedBuiltin(name) {
  * 探测本机 opencode 可执行文件候选路径（优先桌面版 V2）。
  * 纯函数、零副作用；无 fs 能力时返回空数组 —— 由调用方退回 PATH 查找。
  * @param {object} env 环境变量（读 APPDATA / LOCALAPPDATA / PROGRAMFILES / HOME）
- */
-export function candidateExePaths(env) {
-  const e = env || {}
-  const out = []
-  const fs = schedBuiltin('node:fs')
-  const path = schedBuiltin('node:path')
-  if (!fs || typeof fs.readdirSync !== 'function' || !path || typeof path.join !== 'function') return out
-  const roots = []
-  for (const k of ['APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES']) if (e[k]) roots.push(String(e[k]))
-  const home = e.HOME || e.USERPROFILE
-  if (home && !roots.length) roots.push(String(home))
-  for (const root of roots) {
-    const cliDir = path.join.apply(path, [root].concat(DESKTOP_CLI_REL))
-    let versions = []
-    try { versions = fs.readdirSync(cliDir, { withFileTypes: true }) } catch (err) { continue }
-    // 版本目录按 semver 降序（新版本优先）；解析失败的排末尾。
-    const dirs = versions.filter((d) => d && d.isDirectory && d.isDirectory()).map((d) => d.name)
-    const key = (n) => {
-      const m = String(n).match(/(\d+)\.(\d+)\.(\d+)/)
-      return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [-1, -1, -1]
-    }
-    dirs.sort((a, b) => {
-      const ka = key(a), kb = key(b)
-      for (let i = 0; i < 3; i++) if (ka[i] !== kb[i]) return kb[i] - ka[i]
-      return 0
-    })
-    for (const d of dirs) {
-      for (const base of EXE_BASENAMES) {
-        const exe = path.join(cliDir, d, base + (String(e.OS || '').toLowerCase().startsWith('win') || e.APPDATA ? '.exe' : ''))
-        try { if (fs.existsSync(exe)) out.push(exe) } catch (err) { }
-      }
-    }
-  }
-  return out
-}
-
-/**
- * 解析本次调用使用的 exe 前缀（数组或字符串）。
- * 优先级：binPath 设置 > env OPENCODE_BIN/OPENCODE_CLI > 桌面版探测 > PATH 名字。
- * @param {object} env
- * @param {string} [binPath] 设置面板里的显式路径（可空）
  */
 export function resolveExePrefix(env, binPath) {
   const e = env || {}

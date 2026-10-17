@@ -31,7 +31,7 @@ import * as mimoMcp from './providers/mimo.mjs'
 import * as opencodeMcp from './providers/opencode.mjs'
 
 const SERVER_NAME = 'cli-bridge-mcp'
-const SERVER_VERSION = '0.2.6'
+const SERVER_VERSION = '0.2.7'
 const PROTOCOL = '2024-11-05'
 
 const PROVIDERS = [agyMcp, codebuddyMcp, mimoMcp, opencodeMcp]
@@ -183,3 +183,4 @@ process.stdin.on('data', (d) => {
 process.stdin.on('end', () => { stdinClosed = true; maybeExit() })
 process.on('SIGINT', () => process.exit(0))
 process.on('SIGTERM', () => process.exit(0))
+

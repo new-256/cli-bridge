@@ -37,10 +37,9 @@ export function codebuddyModelsTool(ctx) {
           lines.push('  ' + m.id + (m.creditLabel ? '  ' + m.creditLabel : '') + (flags.length ? '  [' + flags.join(',') + ']' : ''))
         }
         if (list.length > 40) lines.push('  … and ' + (list.length - 40) + ' more')
-        const srcLabel = v.source === 'account-live'
-          ? 'account-live (authoritative for this account)'
-          : 'cli-help (installed CLI roster, not the licensed subset)'
-        lines.push('source: ' + srcLabel)
+        // 只有一种来源：账号实时（服务端裁决）。不再有 cli-help 兜底分支，
+        // 因为 CLI 的 --help 名册实测会滞后服务端并含已废弃 id。
+        lines.push('source: account-live (authoritative for this account)')
         if (v.note) lines.push('note: ' + v.note)
         return [{ type: 'text', text: lines.join('\n') }]
       },
@@ -54,30 +53,31 @@ export function codebuddyModelsTool(ctx) {
         //    绝不把静态表冒充成账号可用清单。
         const extraEnv = (c.faceEnv && c.faceEnv(backend)) || {}
         const probe = await probeAccountModels(env, { envExtra: extraEnv, timeoutMs: a.timeoutMs })
-        let ids = null
-        let source = null
-        let note = ''
-        if (probe.ok && probe.ids.length) {
-          ids = probe.ids
-          source = 'account-live'
-        } else {
-          // ② CLI 声明的 roster（零网络，随 CLI 版本更新）。
-          const help = fetchHelpModelsSync(env, { timeoutMs: a.timeoutMs })
-          if (help.ok && help.ids.length) {
-            ids = help.ids
-            source = 'cli-help'
-            note = 'account probe unavailable (' + String(probe.error || 'not logged in for this face') +
-              '); showing the roster the installed CLI declares. It reflects the CLI version, not the licensed subset of this account.'
-          }
-        }
-        if (!ids || !ids.length) {
+
+        // 唯一权威源 = 账号探测（服务端裁决）。**不再回落 CLI `--help` 名册**：
+        // 实测 CLI 2.167.0 的 help 文本本身就过时（18 项、含已废弃的 minimax-m3 /
+        // kimi-k3-1、缺 3 个真实模型），拿它兜底等于把错误清单当结果交付。
+        // 探测失败就明确失败，并附上「CLI 声明了 N 项」作为诊断线索（只作提示，不展示
+        // 那些 id），符合红线：开发期禁止静默降级。
+        if (!probe.ok || !probe.ids || !probe.ids.length) {
+          let hint = ''
+          try {
+            const help = fetchHelpModelsSync(env, { timeoutMs: a.timeoutMs })
+            if (help.ok && help.ids.length) {
+              hint = ' The installed CLI declares ' + help.ids.length + ' models via --help, but that roster is a static ' +
+                'build-time list and has been observed to lag the server (it can contain retired ids). It is NOT shown here ' +
+                'because it is not authoritative for this account.'
+            }
+          } catch (e) { }
           return {
             ok: false, backend,
-            error: 'no live model roster could be read for backend "' + backend + '". ' +
-              'Account probe: ' + String(probe.error || 'failed') + '. ' +
-              'Install/fix the codebuddy CLI (CODEBUDDY_BIN) and make sure this face is logged in, then retry.'
+            error: 'no account model roster for backend "' + backend + '": ' + String(probe.error || 'probe failed') +
+              '. Make sure this product face is logged in (run the codebuddy CLI and complete login), or set CODEBUDDY_BIN ' +
+              'to the right executable, then retry.' + hint
           }
         }
+        const ids = probe.ids
+        const source = 'account-live'
 
         // ③ 倍率/授权元数据（来自描述文件；仅作标注，不参与「是否可用」判定）。
         let detail = []
@@ -97,7 +97,7 @@ export function codebuddyModelsTool(ctx) {
         if (a.freeOnly) list = list.filter((m) => m.credits === 0)
         return {
           ok: true, backend, models: list, count: list.length,
-          source, note: note || undefined,
+          source, note: (typeof note !== 'undefined' ? note : undefined),
           probedAt: Date.now()
         }
       }

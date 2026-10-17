@@ -9,6 +9,30 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 > - CodeBuddy 线：[docs/history/codebuddy/CHANGELOG.md](docs/history/codebuddy/CHANGELOG.md)（终版 1.6.2）
 > - MiMo 线：[docs/history/mimo/CHANGELOG.md](docs/history/mimo/CHANGELOG.md)（终版 1.2.9）
 
+## [0.2.7] - 2026-10-18
+
+> 0.2.6 发布后立即发现两件事必须纠正，故 0.2.7 紧随其后。
+
+### Fixed
+- **`--help` 名册本身也是过时的，不能作为兜底**（0.2.6 的错误）：
+  实测本机 CLI 2.167.0 的 `--help` 只列 **18** 项，且含**已不存在**的 `minimax-m3` /
+  `kimi-k3-1`，缺真实的 `glm-5.3-flashx` / `minimax-m3-pay` / `kimi-k3-2`（账号探测给的是
+  19 项且全部有效）。0.2.6 把它当 `cli-help` 兜底展示，等于「把一个已知错误的清单交付给
+  用户」。现移除该兜底：**只有账号探测这一条权威来源**；探测失败则明确报错并说明
+  「CLI 声明了 N 项但不可信，故不展示」，绝不冒充结果。
+- **设置面板同样改为账号探测**（0.2.6 面板仍用 `--help`，因此显示 18 项错误 id）：
+  面板是同步回调，新增 `probeAccountModelsSync()`（spawnSync + 12s 超时 + 5 分钟缓存），
+  与工具走同一权威源、同一 `faceEnv` 端点/凭据注入。
+
+### Changed
+- **行数统计口径修正**：此前用 `Measure-Object -Line` 统计（它会跳过空行），导致多个文件
+  被误判为「已在 600 行内」。按物理行（`ReadAllLines`）实测，0.2.6 时有 4 个文件超线
+  （codebuddy 645 / catalog 637 / mimo 618 / opencode 629）。本轮全部拆到红线内：
+  codebuddy 578 + catalog 599 + consts 72 + schemas 46 + models-tool 106；
+  mimo 517 + mimo-pure 111；opencode 587 + opencode-exe 63。**最大 599**。
+- `scripts/build.mjs` 的多片内联现在覆盖 `providers/<id>-*.mjs` 全集（0.2.6 起支持），
+  本轮新增 consts / schemas / pure / exe 四个片文件，全部按字典序内联进沙箱同一作用域。
+
 ## [0.2.6] - 2026-10-18
 
 ### Fixed

@@ -568,88 +568,19 @@ function createRunner(o) {
   return { coreExecute, runSync, askFallback }
 }
 
-// providers/codebuddy.mjs — codebuddy provider descriptor（真移植，替换 Lead 冒烟占位）。
+// providers/codebuddy.mjs — codebuddy provider descriptor。
 //
-// 移植基线：codebuddy-first-bridge v1.6.x core/codebuddy-core.mjs 的纯逻辑
-// （后端注册表/端点对齐/凭据链/模型目录/buildArgv/parseCodebuddyJson/buildResult/
-// foldEvent/settings 清洗/三工具 schema）与 preset/codebuddy-first 内联语义，
-// 逐字保持（PROVIDER-CONTRACT.md §8 红线：工具入参语义与 schema 不许漂移）。
-// 与 provider 无关的骨架（状态引擎/行流/回退弹窗/展示层）在 core/bridge-kit.mjs。
+// 移植基线：codebuddy-first-bridge v1.6.x 的纯逻辑与 preset/codebuddy-first 内联语义，
+// 逐字保持（契约 §8：工具入参语义与 schema 不许漂移）。provider 无关骨架在 bridge-kit。
+// 纯逻辑片：codebuddy-catalog.mjs（模型目录/凭据/探测）、codebuddy-schemas.mjs（三 schema）、
+// codebuddy-models-tool.mjs（codebuddy_models 工具）。build 会把 codebuddy-*.mjs 全部
+// 内联进沙箱同一作用域。
 //
-// TODO（Lead 定案，0.1.0 不做）：旧包 credits/促销面板的 modelPromotions /
-// isPromotionActive / activePromotionFor（约 200 行）不进统一设置面板；本版
-// modelCatalogDetailed 只给「倍率 + 授权」两标（无促销角标），行为差异在设置面板
-// 单列，运行面（buildArgv/CLI 选择）不受影响。
-//
-// 红线（PROVIDER-CONTRACT.md §8）：
-//  - 本文件会被 build 内联进 dynamic 沙箱（new Function）：绝不出现元环境字面量；
-//    process/env/fs 只经 deps 注入或 typeof 守卫读取；宿主能力全部走 attach(hostOpts)。
-//  - 只允许 import '../core/bridge-kit.mjs' 一行。
-//  - isLimited 用本文件自定义的中文限流表（旧 core verbatim），不用 kit 通用表。// import { createStatusEngine, createRunner, clampInt } from '../core/bridge-kit.mjs'
+// 红线：本文件会被内联进 dynamic 沙箱 —— 绝不出现元环境字面量；process/env/fs 只经
+// deps 注入或 typeof 守卫读取；宿主能力全部走 attach(hostOpts)。isLimited 用本文件
+// 自定义的中文限流表（旧 core verbatim），不用 kit 通用表。// import { createStatusEngine, createRunner, clampInt } from '../core/bridge-kit.mjs'
 // ── 提示词策略段（旧 preset POLICY_TEXT verbatim；systemPrompt order 5）────────
-const POLICY_TEXT = [
-  'codebuddy-first execution policy (local codebuddy CLI bridge, with fallback + live indicator + live status tool).',
-  '',
-  'A local sub-agent CLI named "codebuddy" (Tencent CodeBuddy Code) is available through the codebuddy_run and codebuddy_continue tools. DSH fully controls codebuddy: every invocation runs non-interactively with permissions auto-approved (--permission-mode bypassPermissions), so codebuddy never prompts and DSH decides all of its work. A header status light shows when codebuddy is working — one light per project (working directory), so parallel runs in different projects are tracked separately; call codebuddy_status any time to see what codebuddy is doing right now (per project: current tool/step, recent trail, and cumulative usage).',
-  '',
-  'Priority rule for EVERY mode (normal, plan, accept-edits, subagent/workflow/ralph delegation, and goal rounds):',
-  '- For any real work — implementing features, editing/refactoring code, debugging, running builds, or multi-file investigation — prefer dispatching the task to codebuddy_run FIRST with a complete, self-contained prompt.',
-  '- Use native read/write/shell tools mainly for quick read-only lookups and for the final build/test verification of what codebuddy produced.',
-  '- In plan mode, call codebuddy_run with mode=auto (or mode=plan); in accept-edits/normal mode codebuddy_run applies edits directly.',
-  '- When you delegate to a DSH subagent or workflow, instruct that delegate to also prefer codebuddy_run.',
-  '- For long-running tasks, call codebuddy_run with background=true and collect the result with job_output; use codebuddy_status to watch progress.',
-  '',
-  'Fallback protocol: when codebuddy is rate-limited or the network is down, codebuddy_run/codebuddy_continue automatically pop a confirmation dialog asking the user whether to use the DSH local API config. If the returned result has fallback=true (status FALLBACK_TO_DSH), the user chose to fall back: complete the task with native DSH tools / the local model and DO NOT call codebuddy again for this task. If ok=false without fallback, report the codebuddy error. Never loop codebuddy calls; never ask codebuddy to call back into DSH.',
-  '',
-  'Model selection: codebuddy_run takes an optional model. When unspecified, the CLI default applies unless the user set a preferred default model in the plugin settings (then that is injected automatically per call). Which models ACTUALLY WORK depends on the ACCOUNT, and the authoritative live list comes from the server: running the CLI with a nonexistent model returns 400 followed by "Currently supported models for your account:" and one "- <id>" per line (core exposes parseAccountModels for this; the plugin caches the result automatically and the settings panel shows exactly those ids, with the credit multiplier of each). Do NOT trust the bundled product descriptor as a menu of usable models: it lists ids with an "-ioa" suffix (glm-5.3-ioa) and expensive flagships (claude-opus-4.8, gpt-5.4, gpt-6-astra) that are present in the catalogue but NOT licensed for this account, and picking one fails with 400 "only available for authorized users". The four backends are also not one pool: "codebuddy" and "codebuddy-intl" are the npm CLI and offer its catalogue - including the free tier (hy3 and deepseek-v4.1-flash cost x0.00 credits; hy4-preview costs x0.29 but is frequently free on promotional accounts); "codebuddy-en" (WorkBuddyAI) has its OWN catalogue which does NOT contain hy4-preview or deepseek-v4.1-flash - it offers hy3 (free), gpt-5.1-codex-mini, gemini-3.1-flash-lite, gemini-2.5-flash, minimax-m3, gemini-3.0-flash, deepseek-v3-2-volc, kimi-k2.5/2.6, glm-5.0/5.2/5.3, gpt-5.3-codex, gpt-5.4/5.5, gpt-5.6-sol/terra/luna and the role aliases (fast/balanced/primary/deep-model); "workbuddy" (domestic desktop) has a further catalogue (auto, hy4-preview, hy3, deepseek-v4.1-flash, glm-5.x, kimi-k2.6/2.7/2.8-preview/k3-1, minimax-m3/m2.7, deepseek-v4-pro). Within a face availability is still gated per ACCOUNT: an id outside the account catalogue fails with "400 model [...] service info not found", and one inside it but unlicensed fails with "400 model [...] is only available for authorized users". International ids (claude-sonnet-5, claude-opus-5, gemini-3.1-pro, ...) are per-account gated and return the latter for a domestic account. COST: every id carries a credit multiplier in the credits field of its descriptor (x0.00 means free, x3.31 means 3.31x the base rate); the settings panel shows each candidate with its multiplier and reads it live from the CLI descriptor, so it stays in sync when the CLI is upgraded. Measured free (x0.00) models for this account: hy3 and deepseek-v4.1-flash (both npm faces) and hy3 for WorkBuddyAI; hy4-preview is x0.29 on npm faces. Prefer the cheapest model that can do the job and use a free one for routine work; do not silently upgrade to an expensive id when the task is simple. To get the exact live list for a CLI, run it with a deliberately invalid model id - the reply prints "Currently supported models for your account:" followed by one "- <id>" per line (core exposes parseAccountModels for this). Pass a model only when the task clearly benefits from a specific one; the default is usually right. Optional effort: minimal/low/medium/high/xhigh/max. Optional maxTurns caps agentic turns (default unlimited).',
-  '',
-  'Backends: codebuddy_run/codebuddy_continue take an optional backend parameter choosing which CLI face of the same engine (Tencent CodeBuddy Code) runs the task. "codebuddy" is the domestic CodeBuddy (npm CLI @tencent-ai/codebuddy-code, product endpoint www.codebuddy.ai) — default for coding work. "codebuddy-intl" is the INTERNATIONAL face of that SAME npm CLI (product.ioa.json catalogue: claude-sonnet-5, claude-opus-5, gemini-3.1-pro, gpt-6-astra, hy3-ioa …); use it when the account is an international CodeBuddy account. Its aliases "codebuddy-ioa" and "codebuddy-international" are accepted and normalized to codebuddy-intl. "codebuddy-en" is the WorkBuddy INTERNATIONAL edition — the CLI bundled with the WorkBuddyAI desktop app (C:\\Program Files\\WorkBuddyAI, product endpoint www.workbuddy.ai); the aliases "workbuddy-en" and "workbuddy-ai" are also accepted and normalized to codebuddy-en. "workbuddy" is the CLI bundled with the domestic WorkBuddy desktop app (product endpoint copilot.tencent.com, zero config) — the office-scenario face: documents, slides, spreadsheets, knowledge-base lookups, image/video generation, WeChat/WeCom replies. When the user asks for office/document/IM work, dispatch with backend="workbuddy"; for international accounts use "codebuddy-intl" (CodeBuddy 国际版) or "codebuddy-en" (WorkBuddy 国际版 / WorkBuddyAI). Sessions are kept per backend (login domains are exclusive), and continuing a session automatically routes back to the backend that owns it (explicit backend wins). A user-preferred default backend (plugin settings) applies when a call is new (no session) and no explicit backend is given.'
-].join('\n')
-
-// ── 限流/网络/认证失败判定（旧 core verbatim）。仅匹配 stderr + status；数字码
-// 加词边界（避免 "1500" 命中 500、"4013" 命中 401）。中文码（流量/受限/金额/
-// 余额/额度/认证/连接/断开 等）为 codebuddy 面专属，必须逐字保留。
-// 命名纪律（mimo 同款）：本文件顶层名绝不与 core/bridge-kit.mjs 顶层导出同名 ——
-// dynamic 形态把 kit 与 provider 内联进同一脚本作用域，同名 const 直接炸语法
 // （LIMIT_RE 在 kit L33 已有，故此处带 CODEBUDDY_ 前缀）。
-const CODEBUDDY_LIMIT_RE = /rate.?limit|ratelimit|\b429\b|too many|quota|insufficient|credit|balance|exhausted|exceed|\bnetwork\b|offline|ENETUNREACH|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|\btimeouts?\b|timed out|unavailable|\b50[023]\b|\b40[13]\b|unauthorized|invalid api|api key|proxy|socket|tls|ssl|\bdns\b|网络|超时|限流|流量|受限|配额|金额|余额|额度|认证|连接|断开/i
-
-// ── 后端注册表（旧 core verbatim：端点按登录域自动对齐）───────────────────────
-const BACKENDS = ['codebuddy', 'codebuddy-intl', 'codebuddy-en', 'workbuddy']
-
-const BACKEND_ENDPOINTS = {
-  'codebuddy': 'https://www.codebuddy.ai/v2',
-  'codebuddy-intl': 'https://www.codebuddy.ai/v2',
-  'codebuddy-en': 'https://www.workbuddy.ai/v2',
-  'workbuddy': 'https://copilot.tencent.com/v2'
-}
-
-const AUTH_DOMAIN_ENDPOINTS = {
-  'www.codebuddy.cn': 'https://www.codebuddy.cn/v2',
-  'www.codebuddy.ai': 'https://www.codebuddy.ai/v2',
-  'www.workbuddy.ai': 'https://www.workbuddy.ai/v2',
-  'copilot.tencent.com': 'https://copilot.tencent.com/v2'
-}
-
-const BACKEND_LABELS = {
-  'codebuddy': 'CodeBuddy 国内版（npm CLI）',
-  'codebuddy-intl': 'CodeBuddy 国际版（npm CLI · 国际面）',
-  'codebuddy-en': 'WorkBuddy 国际版（WorkBuddyAI 桌面 CLI）',
-  'workbuddy': 'WorkBuddy 国内版（桌面 CLI）'
-}
-
-const BACKEND_ALIASES = {
-  'workbuddy-en': 'codebuddy-en',
-  'workbuddy-ai': 'codebuddy-en',
-  'codebuddy-ioa': 'codebuddy-intl',
-  'codebuddy-international': 'codebuddy-intl',
-  'codebuddy-oversea': 'codebuddy-intl'
-}
-
-const DEFAULT_BACKEND = 'codebuddy'
-
-const SETTINGS_KEYS = ['preferredBackend', 'defaultModel', 'codebuddyEnToken', 'endpointOverride']
-
 // codebuddy-en 凭据的第三条通道：DSH 凭据库里可能已有的 workbuddy key（旧 core verbatim）。
 
 // 离线/读不到描述文件时的回退静态表（真机按账号实测快照，2026-09）。
@@ -659,7 +590,7 @@ const SETTINGS_KEYS = ['preferredBackend', 'defaultModel', 'codebuddyEnToken', '
 //   • dynamic 沙箱形态：scripts/build.mjs 把该文件内联进同一作用域（模板顶部的
 //     第三个占位标记），import 行被 stripModuleSyntax 剥掉，同名标识符天然可见。
 //     ⚠️ 本注释里绝不写出那个标记的字面量：build 做全局文本替换，注释中出现同样
-//     会被替换成正文代码，把注释劈开 → 生成物语法崩。// import { BACKEND_MODEL_IDS, PRODUCT_DESCRIPTOR_ENV, CREDIT_ID_ALIASES, MODEL_DESCRIPTION, BACKEND_ENUM, accountConfigCandidates, productDescriptorCandidates, normalizeProductConfig, extractModelIds, parseCreditValue, formatCreditLabel, extractModelCredits, lookupModelCredits, backendModelCatalog, rememberAccountCatalog, getAccountCatalog, parseAccountModels, modelCatalogDetailed, formatModelCatalogText, cbCatalogSetHost, BACKEND_AUTH_IDS, CREDENTIAL_KEYS, readBackendAuthDomain, readDshWorkbuddyToken, resolveEnToken, fetchHelpModelsSync, cachedCliModels, currentPreferredBackend, parseHelpModels, RUN_PARAMS, CONTINUE_PARAMS, STATUS_PARAMS } from './codebuddy-catalog.mjs'// import { codebuddyModelsTool } from './codebuddy-models-tool.mjs'
+//     会被替换成正文代码，把注释劈开 → 生成物语法崩。// import { BACKEND_MODEL_IDS, PRODUCT_DESCRIPTOR_ENV, CREDIT_ID_ALIASES, MODEL_DESCRIPTION, BACKEND_ENUM, accountConfigCandidates, productDescriptorCandidates, normalizeProductConfig, extractModelIds, parseCreditValue, formatCreditLabel, extractModelCredits, lookupModelCredits, backendModelCatalog, rememberAccountCatalog, getAccountCatalog, parseAccountModels, modelCatalogDetailed, formatModelCatalogText, cbCatalogSetHost, BACKEND_AUTH_IDS, CREDENTIAL_KEYS, readBackendAuthDomain, readDshWorkbuddyToken, resolveEnToken, fetchHelpModelsSync, cachedCliModels, currentPreferredBackend, parseHelpModels, probeAccountModelsSync, } from './codebuddy-catalog.mjs'// import { codebuddyModelsTool } from './codebuddy-models-tool.mjs'// import { POLICY_TEXT, CODEBUDDY_LIMIT_RE, BACKENDS, BACKEND_ENDPOINTS, AUTH_DOMAIN_ENDPOINTS, BACKEND_LABELS, BACKEND_ALIASES, DEFAULT_BACKEND, SETTINGS_KEYS } from './codebuddy-consts.mjs'// import { RUN_PARAMS, CONTINUE_PARAMS, STATUS_PARAMS } from './codebuddy-schemas.mjs'
 function defineProvider (deps = {}) {
   const env = deps.env || {}
   let host = null // attach 后保存 hostOpts（preset/dynamic/MCP 形态宿主能力）
@@ -1073,16 +1004,25 @@ function defineProvider (deps = {}) {
       defaults: () => normalizeSettings(null),
       normalize: (raw) => normalizeSettings(raw),
       meta() {
-        // defaultModel 下拉 = **实时**取自 CLI（parseHelpModels 解析 `--help` 的
-        // "Currently supported: (...)"）。此前读磁盘 product.ioa.json 静态表，实测
-        // 落后于 CLI（16 项 vs CLI 19 项，且 2 个 id 已改名），是「列表不对」的根因。
-        // 面板必须同步返回，故用零网络的 cli-help roster；账号级权威清单由
-        // codebuddy_models 工具（异步探测）提供。
-        // 面跟随 preferredBackend（旧实现硬编码 codebuddy 面，无视用户设置）。
+        // defaultModel 下拉 = 账号级实时清单（服务端裁决）。走过的弯路留档：
+        //   ① 随包冻结的 product.ioa.json → 16 项、2 个 id 已改名（错）
+        //   ② CLI `--help` 的 "Currently supported:" → 18 项，但那是 CLI 构建期烙进去的，
+        //      实测同样滞后（含已废弃的 minimax-m3/kimi-k3-1，缺 glm-5.3-flashx 等）
+        //   ③ 现在：用无效模型探测让服务端回「该账号当前支持」的 19 项 —— 唯一权威源。
+        // 面板同步回调故用 spawnSync 探测并缓存 5 分钟；失败则下拉留空 + 明确提示，
+        // 绝不展示已知错误的 roster。面跟随 preferredBackend（旧实现硬编码 codebuddy 面）。
         const face = (currentPreferredBackend() && normalizeBackend(currentPreferredBackend())) || DEFAULT_BACKEND
-        const live = cachedCliModels(face, () => fetchHelpModelsSync(env))
+        const faceEnv = (() => {
+          try {
+            const s = deps.settings || {}
+            const authDomain = readBackendAuthDomain(face, { env })
+            const tok = resolveEnToken(face === 'codebuddy-en' ? s.codebuddyEnToken : null, { env })
+            return endpointEnv(face, s.endpointOverride, authDomain, tok.token) || {}
+          } catch (e) { return {} }
+        })()
+        const live = cachedCliModels(face, () => probeAccountModelsSync(env, { envExtra: faceEnv, timeoutMs: 12000 }))
         let options = []
-        let note = '账号实际可用性以服务端实时裁决；日常任务优先免费（x0.00）。'
+        let note = ''
         if (live && live.ok && live.ids.length) {
           const detail = modelCatalogDetailed(face, { env, accountModels: live.ids })
           const byId = new Map(detail.map((x) => [x.id, x]))
@@ -1090,9 +1030,10 @@ function defineProvider (deps = {}) {
             const d = byId.get(id)
             return { value: id, label: (d && d.label) || id }
           })
-          note = '实时来自本机 codebuddy CLI 的声明名册（' + live.ids.length + ' 项，随 CLI 版本更新）；当前面：' + face + '。账号级权威清单见 codebuddy_models。'
+          note = '账号实时清单（' + live.ids.length + ' 项，服务端裁决）；当前面：' + face + '。日常任务优先免费（x0.00）。'
         } else {
-          note = '未能从 CLI 读取模型名册（' + String((live && live.error) || 'unknown') + '）—— 下拉为空，可手动输入模型 id。'
+          note = '未能读取该账号的模型清单（' + String((live && live.error) || 'unknown') +
+            '）。请确认该产品面已登录（在 codebuddy CLI 里完成登录），或手动输入模型 id。'
         }
         return {
           titleSuffix: 'CodeBuddy',
@@ -1532,6 +1473,38 @@ const BACKEND_ENUM = ['codebuddy', 'codebuddy-intl', 'codebuddy-ioa', 'codebuddy
   }
 
   /**
+   * 同步版的账号探测（供设置面板用 —— 面板必须同步返回）。
+   * 走 spawnSync + 超时；结果进 5 分钟缓存，避免每次渲染都打一次网络。
+   *
+   * ⚠️ 为什么面板不能用 `--help` 名册顶替：实测本机 CLI 2.167.0 的 help 文本**本身
+   * 就是过时的** —— 它列 18 项且含已不存在的 `minimax-m3` / `kimi-k3-1`，缺真实的
+   * `glm-5.3-flashx` / `minimax-m3-pay` / `kimi-k3-2`；而账号探测给出 19 项且全部有效。
+   * 也就是说「CLI 声明」≠「服务端实际可用」，拿它当兜底会直接把错误清单展示给用户。
+   * 故这里宁可空列表 + 明确提示，也不展示已知错误的 roster。
+   * @returns {{ok:boolean, ids:string[], mode:string, error?:string}}
+   */
+  function probeAccountModelsSync(env, opts) {
+    const o = opts || {}
+    const cands = cbCatalogCliCandidates(env)
+    const extraEnv = o.envExtra || {}
+    const reasons = []
+    const timeout = Math.max(3000, Math.min(o.timeoutMs || 12000, 30000))
+    for (const exe of cands) {
+      const r = cliSpawnSync(exe, ['-p', 'hi', '--model', '__clb_probe_invalid__', '--output-format', 'text'], {
+        timeout,
+        env: Object.assign({}, (globalThis.process && globalThis.process.env) || {}, extraEnv)
+      })
+      if (!r || r.error) { reasons.push(exe + ': ' + String((r && r.error && (r.error.code || r.error.message)) || 'spawn failed')); continue }
+      const out = String(r.stdout || '') + String(r.stderr || '')
+      const ids = parseAccountModels(out)
+      if (ids && ids.length) return { ok: true, ids, mode: 'account-live', exe }
+      const head = String(out).replace(/\s+/g, ' ').trim().slice(0, 140)
+      reasons.push(exe + ': exit ' + r.status + ', no account roster' + (head ? ' — ' + head : ''))
+    }
+    return { ok: false, ids: [], mode: 'account-live', error: reasons.join('; ') || 'no CLI candidate to probe' }
+  }
+
+  /**
    * 异步探测「该账号当前支持」的清单：用无效模型触发 CLI 的 400 报文。
    * 对齐 workbuddy-auth 的权威白名单语义（服务器告诉我们这个账号能用什么）。
    * @returns {Promise<{ok:boolean, ids:string[], mode:string, error?:string}>}
@@ -1757,44 +1730,80 @@ const CREDENTIAL_KEYS = ['WORKBUDDY_TOKEN', 'WORKBUDDY_AI_TOKEN', 'CODEBUDDY_EN_
     return { token: null, source: null }
   }
 
-// ── 三工具 schema（旧 preset/codebuddy-first verbatim；契约 §8 红线）────────────
-// 纯数据，无依赖 —— 放这里是为了让主描述符留在 600 行红线内（规则 §26）。
-const RUN_PARAMS = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['prompt'],
-  properties: {
-    prompt: { type: 'string', description: 'The full task/instruction for codebuddy. Be complete and self-contained.' },
-    backend: { type: 'string', enum: BACKEND_ENUM, description: 'Which CLI face to dispatch to. codebuddy (default; domestic CodeBuddy npm CLI, product endpoint www.codebuddy.ai) for coding work; codebuddy-intl = CodeBuddy INTERNATIONAL face of the same npm CLI (product.ioa.json catalogue: claude-sonnet-5 / claude-opus-5 / gemini-3.1-pro / gpt-6-astra / hy3-ioa ...; aliases codebuddy-ioa / codebuddy-international) when the account is an international CodeBuddy account; codebuddy-en = WorkBuddy international edition (the WorkBuddyAI desktop bundled CLI at C:\\Program Files\\WorkBuddyAI, product endpoint www.workbuddy.ai; needs codebuddyEnToken unless DSH already holds a workbuddy key) — aliases workbuddy-en / workbuddy-ai also accepted; workbuddy = WorkBuddy domestic desktop CLI (product endpoint copilot.tencent.com, zero config), the office-scenario face: documents/slides/spreadsheets, knowledge-base lookups, image/video generation, WeChat/WeCom replies. New calls without a backend follow the user-preferred default backend (plugin settings). Continuing a session routes back to its owning backend automatically.' },
-    mode: { type: 'string', enum: ['auto', 'plan', 'accept-edits'], description: 'auto follows DSH plan state; plan = no writes; accept-edits = allow edits. Default auto.' },
-    model: { type: 'string', description: MODEL_DESCRIPTION },
-    effort: { type: 'string', enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], description: 'Optional reasoning effort.' },
-    maxTurns: { type: 'integer', description: 'Optional max agentic turns (1-500, default unlimited).' },
-    cwd: { type: 'string', description: 'Working directory for codebuddy. Defaults to the DSH workspace root.' },
-    addDirs: { type: 'array', items: { type: 'string' }, description: 'Extra directories to add to codebuddy workspace.' },
-    timeoutSec: { type: 'integer', description: 'Run timeout seconds (10-3600, default 300); a DSH-side hang guard force-terminates at timeout+60s.' },
-    background: { type: 'boolean', description: 'Run as a background job and return a jobId immediately.' }
-  }
+
+// ── inlined from providers/codebuddy-consts.mjs ──
+// providers/codebuddy-consts.mjs — codebuddy 的提示词策略与后端注册表常量（纯数据）。
+//
+// 从 providers/codebuddy.mjs 拆出，让主描述符留在 600 行红线内（规则 §26）。
+// build 会把 providers/codebuddy-*.mjs 全部内联进 dynamic 沙箱同一作用域。
+// 命名纪律：顶层名绝不与 core/bridge-kit.mjs 同名（同作用域重复声明 = 语法错）。
+// ⚠️ 注释里绝不写出口令标记字面量（build 全局替换会把注释劈开）。
+
+// ── 提示词策略段（旧 preset POLICY_TEXT verbatim；systemPrompt order 5）────────
+const POLICY_TEXT = [
+  'codebuddy-first execution policy (local codebuddy CLI bridge, with fallback + live indicator + live status tool).',
+  '',
+  'A local sub-agent CLI named "codebuddy" (Tencent CodeBuddy Code) is available through the codebuddy_run and codebuddy_continue tools. DSH fully controls codebuddy: every invocation runs non-interactively with permissions auto-approved (--permission-mode bypassPermissions), so codebuddy never prompts and DSH decides all of its work. A header status light shows when codebuddy is working — one light per project (working directory), so parallel runs in different projects are tracked separately; call codebuddy_status any time to see what codebuddy is doing right now (per project: current tool/step, recent trail, and cumulative usage).',
+  '',
+  'Priority rule for EVERY mode (normal, plan, accept-edits, subagent/workflow/ralph delegation, and goal rounds):',
+  '- For any real work — implementing features, editing/refactoring code, debugging, running builds, or multi-file investigation — prefer dispatching the task to codebuddy_run FIRST with a complete, self-contained prompt.',
+  '- Use native read/write/shell tools mainly for quick read-only lookups and for the final build/test verification of what codebuddy produced.',
+  '- In plan mode, call codebuddy_run with mode=auto (or mode=plan); in accept-edits/normal mode codebuddy_run applies edits directly.',
+  '- When you delegate to a DSH subagent or workflow, instruct that delegate to also prefer codebuddy_run.',
+  '- For long-running tasks, call codebuddy_run with background=true and collect the result with job_output; use codebuddy_status to watch progress.',
+  '',
+  'Fallback protocol: when codebuddy is rate-limited or the network is down, codebuddy_run/codebuddy_continue automatically pop a confirmation dialog asking the user whether to use the DSH local API config. If the returned result has fallback=true (status FALLBACK_TO_DSH), the user chose to fall back: complete the task with native DSH tools / the local model and DO NOT call codebuddy again for this task. If ok=false without fallback, report the codebuddy error. Never loop codebuddy calls; never ask codebuddy to call back into DSH.',
+  '',
+  'Model selection: codebuddy_run takes an optional model. When unspecified, the CLI default applies unless the user set a preferred default model in the plugin settings (then that is injected automatically per call). Which models ACTUALLY WORK depends on the ACCOUNT, and the authoritative live list comes from the server: running the CLI with a nonexistent model returns 400 followed by "Currently supported models for your account:" and one "- <id>" per line (core exposes parseAccountModels for this; the plugin caches the result automatically and the settings panel shows exactly those ids, with the credit multiplier of each). Do NOT trust the bundled product descriptor as a menu of usable models: it lists ids with an "-ioa" suffix (glm-5.3-ioa) and expensive flagships (claude-opus-4.8, gpt-5.4, gpt-6-astra) that are present in the catalogue but NOT licensed for this account, and picking one fails with 400 "only available for authorized users". The four backends are also not one pool: "codebuddy" and "codebuddy-intl" are the npm CLI and offer its catalogue - including the free tier (hy3 and deepseek-v4.1-flash cost x0.00 credits; hy4-preview costs x0.29 but is frequently free on promotional accounts); "codebuddy-en" (WorkBuddyAI) has its OWN catalogue which does NOT contain hy4-preview or deepseek-v4.1-flash - it offers hy3 (free), gpt-5.1-codex-mini, gemini-3.1-flash-lite, gemini-2.5-flash, minimax-m3, gemini-3.0-flash, deepseek-v3-2-volc, kimi-k2.5/2.6, glm-5.0/5.2/5.3, gpt-5.3-codex, gpt-5.4/5.5, gpt-5.6-sol/terra/luna and the role aliases (fast/balanced/primary/deep-model); "workbuddy" (domestic desktop) has a further catalogue (auto, hy4-preview, hy3, deepseek-v4.1-flash, glm-5.x, kimi-k2.6/2.7/2.8-preview/k3-1, minimax-m3/m2.7, deepseek-v4-pro). Within a face availability is still gated per ACCOUNT: an id outside the account catalogue fails with "400 model [...] service info not found", and one inside it but unlicensed fails with "400 model [...] is only available for authorized users". International ids (claude-sonnet-5, claude-opus-5, gemini-3.1-pro, ...) are per-account gated and return the latter for a domestic account. COST: every id carries a credit multiplier in the credits field of its descriptor (x0.00 means free, x3.31 means 3.31x the base rate); the settings panel shows each candidate with its multiplier and reads it live from the CLI descriptor, so it stays in sync when the CLI is upgraded. Measured free (x0.00) models for this account: hy3 and deepseek-v4.1-flash (both npm faces) and hy3 for WorkBuddyAI; hy4-preview is x0.29 on npm faces. Prefer the cheapest model that can do the job and use a free one for routine work; do not silently upgrade to an expensive id when the task is simple. To get the exact live list for a CLI, run it with a deliberately invalid model id - the reply prints "Currently supported models for your account:" followed by one "- <id>" per line (core exposes parseAccountModels for this). Pass a model only when the task clearly benefits from a specific one; the default is usually right. Optional effort: minimal/low/medium/high/xhigh/max. Optional maxTurns caps agentic turns (default unlimited).',
+  '',
+  'Backends: codebuddy_run/codebuddy_continue take an optional backend parameter choosing which CLI face of the same engine (Tencent CodeBuddy Code) runs the task. "codebuddy" is the domestic CodeBuddy (npm CLI @tencent-ai/codebuddy-code, product endpoint www.codebuddy.ai) — default for coding work. "codebuddy-intl" is the INTERNATIONAL face of that SAME npm CLI (product.ioa.json catalogue: claude-sonnet-5, claude-opus-5, gemini-3.1-pro, gpt-6-astra, hy3-ioa …); use it when the account is an international CodeBuddy account. Its aliases "codebuddy-ioa" and "codebuddy-international" are accepted and normalized to codebuddy-intl. "codebuddy-en" is the WorkBuddy INTERNATIONAL edition — the CLI bundled with the WorkBuddyAI desktop app (C:\\Program Files\\WorkBuddyAI, product endpoint www.workbuddy.ai); the aliases "workbuddy-en" and "workbuddy-ai" are also accepted and normalized to codebuddy-en. "workbuddy" is the CLI bundled with the domestic WorkBuddy desktop app (product endpoint copilot.tencent.com, zero config) — the office-scenario face: documents, slides, spreadsheets, knowledge-base lookups, image/video generation, WeChat/WeCom replies. When the user asks for office/document/IM work, dispatch with backend="workbuddy"; for international accounts use "codebuddy-intl" (CodeBuddy 国际版) or "codebuddy-en" (WorkBuddy 国际版 / WorkBuddyAI). Sessions are kept per backend (login domains are exclusive), and continuing a session automatically routes back to the backend that owns it (explicit backend wins). A user-preferred default backend (plugin settings) applies when a call is new (no session) and no explicit backend is given.'
+].join('\n')
+
+// ── 限流/网络/认证失败判定（旧 core verbatim）。仅匹配 stderr + status；数字码
+// 加词边界（避免 "1500" 命中 500、"4013" 命中 401）。中文码（流量/受限/金额/
+// 余额/额度/认证/连接/断开 等）为 codebuddy 面专属，必须逐字保留。
+// 命名纪律（mimo 同款）：本文件顶层名绝不与 core/bridge-kit.mjs 顶层导出同名 ——
+// dynamic 形态把 kit 与 provider 内联进同一脚本作用域，同名 const 直接炸语法
+
+// ── 后端注册表（旧 core verbatim：端点按登录域自动对齐）───────────────────────
+const CODEBUDDY_LIMIT_RE = /rate.?limit|ratelimit|\b429\b|too many|quota|insufficient|credit|balance|exhausted|exceed|\bnetwork\b|offline|ENETUNREACH|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|\btimeouts?\b|timed out|unavailable|\b50[023]\b|\b40[13]\b|unauthorized|invalid api|api key|proxy|socket|tls|ssl|\bdns\b|网络|超时|限流|流量|受限|配额|金额|余额|额度|认证|连接|断开/i
+
+// ── 后端注册表（旧 core verbatim：端点按登录域自动对齐）───────────────────────
+const BACKENDS = ['codebuddy', 'codebuddy-intl', 'codebuddy-en', 'workbuddy']
+
+const BACKEND_ENDPOINTS = {
+  'codebuddy': 'https://www.codebuddy.ai/v2',
+  'codebuddy-intl': 'https://www.codebuddy.ai/v2',
+  'codebuddy-en': 'https://www.workbuddy.ai/v2',
+  'workbuddy': 'https://copilot.tencent.com/v2'
 }
-const CONTINUE_PARAMS = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['prompt'],
-  properties: {
-    prompt: { type: 'string', description: 'Follow-up instruction for the ongoing codebuddy conversation.' },
-    sessionId: { type: 'string', description: 'codebuddy session id to resume (from a prior codebuddy_run result).' },
-    latest: { type: 'boolean', description: 'Continue the most recent codebuddy conversation instead of a specific id.' },
-    backend: { type: 'string', enum: BACKEND_ENUM, description: 'Which CLI face to resume on. codebuddy-en = WorkBuddy international (WorkBuddyAI desktop CLI; aliases workbuddy-en / workbuddy-ai accepted), workbuddy = WorkBuddy domestic desktop CLI. When omitted, the backend that owns the sessionId is used automatically; brand-new conversations follow the user-preferred default backend (plugin settings).' },
-    mode: { type: 'string', enum: ['auto', 'plan', 'accept-edits'], description: 'Execution mode; default auto.' },
-    model: { type: 'string', description: 'Optional model id (two layers: product face carries it, account licenses it; the credit multiplier of each id comes from the CLI descriptor — see codebuddy_run).' },
-    effort: { type: 'string', enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], description: 'Optional reasoning effort.' },
-    maxTurns: { type: 'integer', description: 'Optional max agentic turns.' },
-    cwd: { type: 'string', description: "Working directory for codebuddy; when resuming, defaults to the resumed session's project directory." },
-    timeoutSec: { type: 'integer', description: 'Run timeout seconds (10-3600, default 300); a DSH-side hang guard force-terminates at timeout+60s.' },
-    background: { type: 'boolean', description: 'Run as a background job and return a jobId immediately.' }
-  }
+
+const AUTH_DOMAIN_ENDPOINTS = {
+  'www.codebuddy.cn': 'https://www.codebuddy.cn/v2',
+  'www.codebuddy.ai': 'https://www.codebuddy.ai/v2',
+  'www.workbuddy.ai': 'https://www.workbuddy.ai/v2',
+  'copilot.tencent.com': 'https://copilot.tencent.com/v2'
 }
-const STATUS_PARAMS = { type: 'object', additionalProperties: false, required: [], properties: { cwd: { type: 'string', description: 'Optional: filter the snapshot to a single project (working directory).' } } }
+
+const BACKEND_LABELS = {
+  'codebuddy': 'CodeBuddy 国内版（npm CLI）',
+  'codebuddy-intl': 'CodeBuddy 国际版（npm CLI · 国际面）',
+  'codebuddy-en': 'WorkBuddy 国际版（WorkBuddyAI 桌面 CLI）',
+  'workbuddy': 'WorkBuddy 国内版（桌面 CLI）'
+}
+
+const BACKEND_ALIASES = {
+  'workbuddy-en': 'codebuddy-en',
+  'workbuddy-ai': 'codebuddy-en',
+  'codebuddy-ioa': 'codebuddy-intl',
+  'codebuddy-international': 'codebuddy-intl',
+  'codebuddy-oversea': 'codebuddy-intl'
+}
+
+const DEFAULT_BACKEND = 'codebuddy'
+
+const SETTINGS_KEYS = ['preferredBackend', 'defaultModel', 'codebuddyEnToken', 'endpointOverride']
+
 
 // ── inlined from providers/codebuddy-models-tool.mjs ──
 // providers/codebuddy-models-tool.mjs — codebuddy_models 工具定义（纯逻辑）。
@@ -1833,10 +1842,9 @@ function codebuddyModelsTool(ctx) {
           lines.push('  ' + m.id + (m.creditLabel ? '  ' + m.creditLabel : '') + (flags.length ? '  [' + flags.join(',') + ']' : ''))
         }
         if (list.length > 40) lines.push('  … and ' + (list.length - 40) + ' more')
-        const srcLabel = v.source === 'account-live'
-          ? 'account-live (authoritative for this account)'
-          : 'cli-help (installed CLI roster, not the licensed subset)'
-        lines.push('source: ' + srcLabel)
+        // 只有一种来源：账号实时（服务端裁决）。不再有 cli-help 兜底分支，
+        // 因为 CLI 的 --help 名册实测会滞后服务端并含已废弃 id。
+        lines.push('source: account-live (authoritative for this account)')
         if (v.note) lines.push('note: ' + v.note)
         return [{ type: 'text', text: lines.join('\n') }]
       },
@@ -1850,30 +1858,31 @@ function codebuddyModelsTool(ctx) {
         //    绝不把静态表冒充成账号可用清单。
         const extraEnv = (c.faceEnv && c.faceEnv(backend)) || {}
         const probe = await probeAccountModels(env, { envExtra: extraEnv, timeoutMs: a.timeoutMs })
-        let ids = null
-        let source = null
-        let note = ''
-        if (probe.ok && probe.ids.length) {
-          ids = probe.ids
-          source = 'account-live'
-        } else {
-          // ② CLI 声明的 roster（零网络，随 CLI 版本更新）。
-          const help = fetchHelpModelsSync(env, { timeoutMs: a.timeoutMs })
-          if (help.ok && help.ids.length) {
-            ids = help.ids
-            source = 'cli-help'
-            note = 'account probe unavailable (' + String(probe.error || 'not logged in for this face') +
-              '); showing the roster the installed CLI declares. It reflects the CLI version, not the licensed subset of this account.'
-          }
-        }
-        if (!ids || !ids.length) {
+
+        // 唯一权威源 = 账号探测（服务端裁决）。**不再回落 CLI `--help` 名册**：
+        // 实测 CLI 2.167.0 的 help 文本本身就过时（18 项、含已废弃的 minimax-m3 /
+        // kimi-k3-1、缺 3 个真实模型），拿它兜底等于把错误清单当结果交付。
+        // 探测失败就明确失败，并附上「CLI 声明了 N 项」作为诊断线索（只作提示，不展示
+        // 那些 id），符合红线：开发期禁止静默降级。
+        if (!probe.ok || !probe.ids || !probe.ids.length) {
+          let hint = ''
+          try {
+            const help = fetchHelpModelsSync(env, { timeoutMs: a.timeoutMs })
+            if (help.ok && help.ids.length) {
+              hint = ' The installed CLI declares ' + help.ids.length + ' models via --help, but that roster is a static ' +
+                'build-time list and has been observed to lag the server (it can contain retired ids). It is NOT shown here ' +
+                'because it is not authoritative for this account.'
+            }
+          } catch (e) { }
           return {
             ok: false, backend,
-            error: 'no live model roster could be read for backend "' + backend + '". ' +
-              'Account probe: ' + String(probe.error || 'failed') + '. ' +
-              'Install/fix the codebuddy CLI (CODEBUDDY_BIN) and make sure this face is logged in, then retry.'
+            error: 'no account model roster for backend "' + backend + '": ' + String(probe.error || 'probe failed') +
+              '. Make sure this product face is logged in (run the codebuddy CLI and complete login), or set CODEBUDDY_BIN ' +
+              'to the right executable, then retry.' + hint
           }
         }
+        const ids = probe.ids
+        const source = 'account-live'
 
         // ③ 倍率/授权元数据（来自描述文件；仅作标注，不参与「是否可用」判定）。
         let detail = []
@@ -1893,13 +1902,58 @@ function codebuddyModelsTool(ctx) {
         if (a.freeOnly) list = list.filter((m) => m.credits === 0)
         return {
           ok: true, backend, models: list, count: list.length,
-          source, note: note || undefined,
+          source, note: (typeof note !== 'undefined' ? note : undefined),
           probedAt: Date.now()
         }
       }
   }
 }
 
+
+// ── inlined from providers/codebuddy-schemas.mjs ──
+// providers/codebuddy-schemas.mjs — 三工具 JSON Schema（纯数据，零依赖）。
+//
+// 旧 preset/codebuddy-first verbatim（契约 §8 红线）：字段名/枚举/描述一字不改。
+// 放这里是为了让 catalog 与主描述符都留在 600 行红线内（规则 §26）。
+// ⚠️ 注释里绝不写出口令标记字面量（build 全局替换会把注释劈开）。// import { BACKEND_ENUM, MODEL_DESCRIPTION } from './codebuddy-catalog.mjs'
+// ── 三工具 schema（旧 preset/codebuddy-first verbatim；契约 §8 红线）────────────
+// 纯数据，无依赖 —— 放这里是为了让主描述符留在 600 行红线内（规则 §26）。
+const RUN_PARAMS = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['prompt'],
+  properties: {
+    prompt: { type: 'string', description: 'The full task/instruction for codebuddy. Be complete and self-contained.' },
+    backend: { type: 'string', enum: BACKEND_ENUM, description: 'Which CLI face to dispatch to. codebuddy (default; domestic CodeBuddy npm CLI, product endpoint www.codebuddy.ai) for coding work; codebuddy-intl = CodeBuddy INTERNATIONAL face of the same npm CLI (product.ioa.json catalogue: claude-sonnet-5 / claude-opus-5 / gemini-3.1-pro / gpt-6-astra / hy3-ioa ...; aliases codebuddy-ioa / codebuddy-international) when the account is an international CodeBuddy account; codebuddy-en = WorkBuddy international edition (the WorkBuddyAI desktop bundled CLI at C:\\Program Files\\WorkBuddyAI, product endpoint www.workbuddy.ai; needs codebuddyEnToken unless DSH already holds a workbuddy key) — aliases workbuddy-en / workbuddy-ai also accepted; workbuddy = WorkBuddy domestic desktop CLI (product endpoint copilot.tencent.com, zero config), the office-scenario face: documents/slides/spreadsheets, knowledge-base lookups, image/video generation, WeChat/WeCom replies. New calls without a backend follow the user-preferred default backend (plugin settings). Continuing a session routes back to its owning backend automatically.' },
+    mode: { type: 'string', enum: ['auto', 'plan', 'accept-edits'], description: 'auto follows DSH plan state; plan = no writes; accept-edits = allow edits. Default auto.' },
+    model: { type: 'string', description: MODEL_DESCRIPTION },
+    effort: { type: 'string', enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], description: 'Optional reasoning effort.' },
+    maxTurns: { type: 'integer', description: 'Optional max agentic turns (1-500, default unlimited).' },
+    cwd: { type: 'string', description: 'Working directory for codebuddy. Defaults to the DSH workspace root.' },
+    addDirs: { type: 'array', items: { type: 'string' }, description: 'Extra directories to add to codebuddy workspace.' },
+    timeoutSec: { type: 'integer', description: 'Run timeout seconds (10-3600, default 300); a DSH-side hang guard force-terminates at timeout+60s.' },
+    background: { type: 'boolean', description: 'Run as a background job and return a jobId immediately.' }
+  }
+}
+const CONTINUE_PARAMS = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['prompt'],
+  properties: {
+    prompt: { type: 'string', description: 'Follow-up instruction for the ongoing codebuddy conversation.' },
+    sessionId: { type: 'string', description: 'codebuddy session id to resume (from a prior codebuddy_run result).' },
+    latest: { type: 'boolean', description: 'Continue the most recent codebuddy conversation instead of a specific id.' },
+    backend: { type: 'string', enum: BACKEND_ENUM, description: 'Which CLI face to resume on. codebuddy-en = WorkBuddy international (WorkBuddyAI desktop CLI; aliases workbuddy-en / workbuddy-ai accepted), workbuddy = WorkBuddy domestic desktop CLI. When omitted, the backend that owns the sessionId is used automatically; brand-new conversations follow the user-preferred default backend (plugin settings).' },
+    mode: { type: 'string', enum: ['auto', 'plan', 'accept-edits'], description: 'Execution mode; default auto.' },
+    model: { type: 'string', description: 'Optional model id (two layers: product face carries it, account licenses it; the credit multiplier of each id comes from the CLI descriptor — see codebuddy_run).' },
+    effort: { type: 'string', enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], description: 'Optional reasoning effort.' },
+    maxTurns: { type: 'integer', description: 'Optional max agentic turns.' },
+    cwd: { type: 'string', description: "Working directory for codebuddy; when resuming, defaults to the resumed session's project directory." },
+    timeoutSec: { type: 'integer', description: 'Run timeout seconds (10-3600, default 300); a DSH-side hang guard force-terminates at timeout+60s.' },
+    background: { type: 'boolean', description: 'Run as a background job and return a jobId immediately.' }
+  }
+}
+const STATUS_PARAMS = { type: 'object', additionalProperties: false, required: [], properties: { cwd: { type: 'string', description: 'Optional: filter the snapshot to a single project (working directory).' } } }
 
 // core/scheduling.mjs — CLI 调度（启用集合 + 调用优先级）单源纯逻辑。
 //

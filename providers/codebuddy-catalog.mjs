@@ -340,6 +340,38 @@ export const BACKEND_ENUM = ['codebuddy', 'codebuddy-intl', 'codebuddy-ioa', 'co
   }
 
   /**
+   * 同步版的账号探测（供设置面板用 —— 面板必须同步返回）。
+   * 走 spawnSync + 超时；结果进 5 分钟缓存，避免每次渲染都打一次网络。
+   *
+   * ⚠️ 为什么面板不能用 `--help` 名册顶替：实测本机 CLI 2.167.0 的 help 文本**本身
+   * 就是过时的** —— 它列 18 项且含已不存在的 `minimax-m3` / `kimi-k3-1`，缺真实的
+   * `glm-5.3-flashx` / `minimax-m3-pay` / `kimi-k3-2`；而账号探测给出 19 项且全部有效。
+   * 也就是说「CLI 声明」≠「服务端实际可用」，拿它当兜底会直接把错误清单展示给用户。
+   * 故这里宁可空列表 + 明确提示，也不展示已知错误的 roster。
+   * @returns {{ok:boolean, ids:string[], mode:string, error?:string}}
+   */
+  export function probeAccountModelsSync(env, opts) {
+    const o = opts || {}
+    const cands = cbCatalogCliCandidates(env)
+    const extraEnv = o.envExtra || {}
+    const reasons = []
+    const timeout = Math.max(3000, Math.min(o.timeoutMs || 12000, 30000))
+    for (const exe of cands) {
+      const r = cliSpawnSync(exe, ['-p', 'hi', '--model', '__clb_probe_invalid__', '--output-format', 'text'], {
+        timeout,
+        env: Object.assign({}, (globalThis.process && globalThis.process.env) || {}, extraEnv)
+      })
+      if (!r || r.error) { reasons.push(exe + ': ' + String((r && r.error && (r.error.code || r.error.message)) || 'spawn failed')); continue }
+      const out = String(r.stdout || '') + String(r.stderr || '')
+      const ids = parseAccountModels(out)
+      if (ids && ids.length) return { ok: true, ids, mode: 'account-live', exe }
+      const head = String(out).replace(/\s+/g, ' ').trim().slice(0, 140)
+      reasons.push(exe + ': exit ' + r.status + ', no account roster' + (head ? ' — ' + head : ''))
+    }
+    return { ok: false, ids: [], mode: 'account-live', error: reasons.join('; ') || 'no CLI candidate to probe' }
+  }
+
+  /**
    * 异步探测「该账号当前支持」的清单：用无效模型触发 CLI 的 400 报文。
    * 对齐 workbuddy-auth 的权威白名单语义（服务器告诉我们这个账号能用什么）。
    * @returns {Promise<{ok:boolean, ids:string[], mode:string, error?:string}>}
@@ -565,41 +597,3 @@ export const CREDENTIAL_KEYS = ['WORKBUDDY_TOKEN', 'WORKBUDDY_AI_TOKEN', 'CODEBU
     return { token: null, source: null }
   }
 
-// ── 三工具 schema（旧 preset/codebuddy-first verbatim；契约 §8 红线）────────────
-// 纯数据，无依赖 —— 放这里是为了让主描述符留在 600 行红线内（规则 §26）。
-export const RUN_PARAMS = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['prompt'],
-  properties: {
-    prompt: { type: 'string', description: 'The full task/instruction for codebuddy. Be complete and self-contained.' },
-    backend: { type: 'string', enum: BACKEND_ENUM, description: 'Which CLI face to dispatch to. codebuddy (default; domestic CodeBuddy npm CLI, product endpoint www.codebuddy.ai) for coding work; codebuddy-intl = CodeBuddy INTERNATIONAL face of the same npm CLI (product.ioa.json catalogue: claude-sonnet-5 / claude-opus-5 / gemini-3.1-pro / gpt-6-astra / hy3-ioa ...; aliases codebuddy-ioa / codebuddy-international) when the account is an international CodeBuddy account; codebuddy-en = WorkBuddy international edition (the WorkBuddyAI desktop bundled CLI at C:\\Program Files\\WorkBuddyAI, product endpoint www.workbuddy.ai; needs codebuddyEnToken unless DSH already holds a workbuddy key) — aliases workbuddy-en / workbuddy-ai also accepted; workbuddy = WorkBuddy domestic desktop CLI (product endpoint copilot.tencent.com, zero config), the office-scenario face: documents/slides/spreadsheets, knowledge-base lookups, image/video generation, WeChat/WeCom replies. New calls without a backend follow the user-preferred default backend (plugin settings). Continuing a session routes back to its owning backend automatically.' },
-    mode: { type: 'string', enum: ['auto', 'plan', 'accept-edits'], description: 'auto follows DSH plan state; plan = no writes; accept-edits = allow edits. Default auto.' },
-    model: { type: 'string', description: MODEL_DESCRIPTION },
-    effort: { type: 'string', enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], description: 'Optional reasoning effort.' },
-    maxTurns: { type: 'integer', description: 'Optional max agentic turns (1-500, default unlimited).' },
-    cwd: { type: 'string', description: 'Working directory for codebuddy. Defaults to the DSH workspace root.' },
-    addDirs: { type: 'array', items: { type: 'string' }, description: 'Extra directories to add to codebuddy workspace.' },
-    timeoutSec: { type: 'integer', description: 'Run timeout seconds (10-3600, default 300); a DSH-side hang guard force-terminates at timeout+60s.' },
-    background: { type: 'boolean', description: 'Run as a background job and return a jobId immediately.' }
-  }
-}
-export const CONTINUE_PARAMS = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['prompt'],
-  properties: {
-    prompt: { type: 'string', description: 'Follow-up instruction for the ongoing codebuddy conversation.' },
-    sessionId: { type: 'string', description: 'codebuddy session id to resume (from a prior codebuddy_run result).' },
-    latest: { type: 'boolean', description: 'Continue the most recent codebuddy conversation instead of a specific id.' },
-    backend: { type: 'string', enum: BACKEND_ENUM, description: 'Which CLI face to resume on. codebuddy-en = WorkBuddy international (WorkBuddyAI desktop CLI; aliases workbuddy-en / workbuddy-ai accepted), workbuddy = WorkBuddy domestic desktop CLI. When omitted, the backend that owns the sessionId is used automatically; brand-new conversations follow the user-preferred default backend (plugin settings).' },
-    mode: { type: 'string', enum: ['auto', 'plan', 'accept-edits'], description: 'Execution mode; default auto.' },
-    model: { type: 'string', description: 'Optional model id (two layers: product face carries it, account licenses it; the credit multiplier of each id comes from the CLI descriptor — see codebuddy_run).' },
-    effort: { type: 'string', enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], description: 'Optional reasoning effort.' },
-    maxTurns: { type: 'integer', description: 'Optional max agentic turns.' },
-    cwd: { type: 'string', description: "Working directory for codebuddy; when resuming, defaults to the resumed session's project directory." },
-    timeoutSec: { type: 'integer', description: 'Run timeout seconds (10-3600, default 300); a DSH-side hang guard force-terminates at timeout+60s.' },
-    background: { type: 'boolean', description: 'Run as a background job and return a jobId immediately.' }
-  }
-}
-export const STATUS_PARAMS = { type: 'object', additionalProperties: false, required: [], properties: { cwd: { type: 'string', description: 'Optional: filter the snapshot to a single project (working directory).' } } }
