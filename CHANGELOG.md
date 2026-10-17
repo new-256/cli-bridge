@@ -9,6 +9,40 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 > - CodeBuddy 线：[docs/history/codebuddy/CHANGELOG.md](docs/history/codebuddy/CHANGELOG.md)（终版 1.6.2）
 > - MiMo 线：[docs/history/mimo/CHANGELOG.md](docs/history/mimo/CHANGELOG.md)（终版 1.2.9）
 
+## [0.2.6] - 2026-10-18
+
+### Fixed
+- **`codebuddy_models` / 设置面板的模型清单「不是实时、也是错的」**（用户报告）。根因：清单
+  读的是随包冻结的 `product.ioa.json` 静态表，实测已落后于本机 CLI ——
+  **静态 16 项 vs CLI 19 项**，其中 `minimax-m3` 实为 `minimax-m3-pay`、`kimi-k3-1` 实为
+  `kimi-k3-2`（两个 id 已失效），另缺 `step-5-preview` / `space-bunny` / `glm-5.3-flashx` / `kimi-k3-2`。
+  改为**以 CLI 为实时权威源**（对齐 `workbuddy-auth` 的「`agents[cli].models` 权威白名单」思路）：
+  - **A. `account-live`**（首选）：起 CLI 用无效模型触发服务端 400，「Currently supported models
+    for your account」即该账号的授权清单 —— 与 workbuddy-auth 从 `/v3/config` 取白名单同义。
+  - **B. `cli-help`**（兜底，如实标注）：解析 `--help` 的 `Currently supported: (...)`，
+    零网络、随 CLI 版本自动更新。回落时 `source` 明确写 `cli-help` 并附 note，
+    **绝不把静态表冒充成账号可用清单**。
+  - 静态表降级为**仅倍率元数据**，不再参与「是否可用」判定。
+- **面板 `defaultModel` 无视 `preferredBackend`**：旧实现硬编码 `DEFAULT_BACKEND`（codebuddy 面），
+  无论用户选哪个后端都只列 codebuddy 面的模型。现跟随设置里的默认后端，且账号探测走与
+  `buildArgv` 完全同一套端点/凭据注入（`faceEnv`）—— 否则会出现「标着 codebuddy-en、
+  实际问的是 codebuddy 面」的错配。
+- **`--help` 名册折行导致清单抖动**：yargs 在长名册上任意列折行，实测把 `minimax-m3-pay`
+  从中间断成 `minimax-` + `m3-pay`，同一命令两次运行给出 18/19 两种结果。解析改为
+  「去掉括号内所有空白再按逗号切」，三次连跑稳定 19 项。
+- **探测失败文案误导**：该面未登录时曾报「codebuddy CLI not found」，实际是「CLI 跑了但没吐
+  账号名册」。现记录每个候选的真实结局（spawn 失败 / exit code + 输出首段），错误可指导处置。
+
+### Changed
+- **`scripts/build.mjs` 支持内联多个片文件**：`providers/<id>-*.mjs` 全部按字典序内联进
+  dynamic 沙箱的同一作用域（此前只认写死的 `<id>-catalog.mjs`）。每撞一次 600 行红线就改一次
+  构建器的做法不可持续。
+- **`codebuddy` provider 再拆一层**：`codebuddy.mjs` 864 → 593 行，拆出 `codebuddy-catalog.mjs`
+  （564）与 `codebuddy-models-tool.mjs`（101），三者均在红线内。
+- **`.mjs` 入口支持**：`CODEBUDDY_BIN` 指向 `.js/.mjs/.cjs` 时经 node 包装（也让测试夹具能
+  完全脱离真实 CLI、可在任意机器复现）。
+- 修的 `DEP0190` 告警：Windows `.cmd` 经 shell 时把命令拼成单字符串，不再传 args 数组。
+
 ## [0.2.5] - 2026-10-18
 
 ### Added

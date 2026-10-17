@@ -4,6 +4,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import defineProvider from '../../providers/codebuddy.mjs'
 import { summarizeArgs, MAX_ARG_LEN, MAX_TRAIL } from '../../core/bridge-kit.mjs'
@@ -284,15 +285,27 @@ test('settings.normalize：bogus→默认、别名清洗、trim、secret 保留�
   assert.equal(p.settings.normalize({ preferredBackend: 'nope' }).preferredBackend, 'codebuddy')
 })
 
-test('settings.meta：4 字段形态 + defaultModel 选项来自目录（免费档在前）', () => {
-  const p = mk()
+test('settings.meta：4 字段形态 + defaultModel 选项来自 CLI 实时名册', () => {
+  // 面板下拉现在是**实时**取自 CLI（`--help` 的 "Currently supported:"），不再读磁盘
+  // 静态描述文件 —— 静态表实测落后（16 项 vs CLI 19 项，且 2 个 id 已改名）。
+  // 用夹具 CLI 保证测试密闭、与机器上装没装 codebuddy 无关。
+  const p = defineProvider({
+    env: { CODEBUDDY_BIN: fileURLToPath(new URL('./fixtures/fake-cb-help.mjs', import.meta.url)) },
+    process
+  })
   const m = p.settings.meta()
   assert.equal(m.titleSuffix, 'CodeBuddy')
   assert.deepEqual(m.fields.map((f) => f.key), ['preferredBackend', 'defaultModel', 'codebuddyEnToken', 'endpointOverride'])
   assert.equal(m.fields[1].type, 'select')
   assert.equal(m.fields[1].allowCustom, true)
   const values = m.fields[1].options.map((o) => o.value)
+  assert.ok(values.length > 0, 'live roster must populate the dropdown')
   assert.ok(values.includes('hy3') && values.includes('hy4-preview'))
+  // 折行还原与静默过期 id 的两条硬约束（本轮修的真实缺陷）
+  assert.ok(values.includes('minimax-m3-pay'), 'wrapped id reassembled')
+  assert.ok(values.includes('kimi-k3-2'), 'renamed id from live roster')
+  assert.ok(!values.includes('minimax-m3'), 'stale static id must not leak in')
+  assert.ok(!values.includes('kimi-k3-1'), 'stale static id must not leak in')
 })
 
 test('settings.diagnose：默认后端 + EN 恒附一行；token 缺失指引进输出', () => {

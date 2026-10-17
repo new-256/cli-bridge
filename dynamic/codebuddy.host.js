@@ -659,45 +659,7 @@ const SETTINGS_KEYS = ['preferredBackend', 'defaultModel', 'codebuddyEnToken', '
 //   • dynamic 沙箱形态：scripts/build.mjs 把该文件内联进同一作用域（模板顶部的
 //     第三个占位标记），import 行被 stripModuleSyntax 剥掉，同名标识符天然可见。
 //     ⚠️ 本注释里绝不写出那个标记的字面量：build 做全局文本替换，注释中出现同样
-//     会被替换成正文代码，把注释劈开 → 生成物语法崩。// import { BACKEND_MODEL_IDS, PRODUCT_DESCRIPTOR_ENV, CREDIT_ID_ALIASES, MODEL_DESCRIPTION, BACKEND_ENUM, accountConfigCandidates, productDescriptorCandidates, normalizeProductConfig, extractModelIds, parseCreditValue, formatCreditLabel, extractModelCredits, lookupModelCredits, backendModelCatalog, rememberAccountCatalog, getAccountCatalog, parseAccountModels, modelCatalogDetailed, formatModelCatalogText, cbCatalogSetHost, BACKEND_AUTH_IDS, CREDENTIAL_KEYS, readBackendAuthDomain, readDshWorkbuddyToken, resolveEnToken, codebuddyModelsTool } from './codebuddy-catalog.mjs'
-// ── 三工具 schema（旧 preset/codebuddy-first verbatim；契约 §8）────────────────
-const RUN_PARAMS = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['prompt'],
-  properties: {
-    prompt: { type: 'string', description: 'The full task/instruction for codebuddy. Be complete and self-contained.' },
-    backend: { type: 'string', enum: BACKEND_ENUM, description: 'Which CLI face to dispatch to. codebuddy (default; domestic CodeBuddy npm CLI, product endpoint www.codebuddy.ai) for coding work; codebuddy-intl = CodeBuddy INTERNATIONAL face of the same npm CLI (product.ioa.json catalogue: claude-sonnet-5 / claude-opus-5 / gemini-3.1-pro / gpt-6-astra / hy3-ioa ...; aliases codebuddy-ioa / codebuddy-international) when the account is an international CodeBuddy account; codebuddy-en = WorkBuddy international edition (the WorkBuddyAI desktop bundled CLI at C:\\Program Files\\WorkBuddyAI, product endpoint www.workbuddy.ai; needs codebuddyEnToken unless DSH already holds a workbuddy key) — aliases workbuddy-en / workbuddy-ai also accepted; workbuddy = WorkBuddy domestic desktop CLI (product endpoint copilot.tencent.com, zero config), the office-scenario face: documents/slides/spreadsheets, knowledge-base lookups, image/video generation, WeChat/WeCom replies. New calls without a backend follow the user-preferred default backend (plugin settings). Continuing a session routes back to its owning backend automatically.' },
-    mode: { type: 'string', enum: ['auto', 'plan', 'accept-edits'], description: 'auto follows DSH plan state; plan = no writes; accept-edits = allow edits. Default auto.' },
-    model: { type: 'string', description: MODEL_DESCRIPTION },
-    effort: { type: 'string', enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], description: 'Optional reasoning effort.' },
-    maxTurns: { type: 'integer', description: 'Optional max agentic turns (1-500, default unlimited).' },
-    cwd: { type: 'string', description: 'Working directory for codebuddy. Defaults to the DSH workspace root.' },
-    addDirs: { type: 'array', items: { type: 'string' }, description: 'Extra directories to add to codebuddy workspace.' },
-    timeoutSec: { type: 'integer', description: 'Run timeout seconds (10-3600, default 300); a DSH-side hang guard force-terminates at timeout+60s.' },
-    background: { type: 'boolean', description: 'Run as a background job and return a jobId immediately.' }
-  }
-}
-const CONTINUE_PARAMS = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['prompt'],
-  properties: {
-    prompt: { type: 'string', description: 'Follow-up instruction for the ongoing codebuddy conversation.' },
-    sessionId: { type: 'string', description: 'codebuddy session id to resume (from a prior codebuddy_run result).' },
-    latest: { type: 'boolean', description: 'Continue the most recent codebuddy conversation instead of a specific id.' },
-    backend: { type: 'string', enum: BACKEND_ENUM, description: 'Which CLI face to resume on. codebuddy-en = WorkBuddy international (WorkBuddyAI desktop CLI; aliases workbuddy-en / workbuddy-ai accepted), workbuddy = WorkBuddy domestic desktop CLI. When omitted, the backend that owns the sessionId is used automatically; brand-new conversations follow the user-preferred default backend (plugin settings).' },
-    mode: { type: 'string', enum: ['auto', 'plan', 'accept-edits'], description: 'Execution mode; default auto.' },
-    model: { type: 'string', description: 'Optional model id (two layers: product face carries it, account licenses it; the credit multiplier of each id comes from the CLI descriptor — see codebuddy_run).' },
-    effort: { type: 'string', enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], description: 'Optional reasoning effort.' },
-    maxTurns: { type: 'integer', description: 'Optional max agentic turns.' },
-    cwd: { type: 'string', description: "Working directory for codebuddy; when resuming, defaults to the resumed session's project directory." },
-    timeoutSec: { type: 'integer', description: 'Run timeout seconds (10-3600, default 300); a DSH-side hang guard force-terminates at timeout+60s.' },
-    background: { type: 'boolean', description: 'Run as a background job and return a jobId immediately.' }
-  }
-}
-const STATUS_PARAMS = { type: 'object', additionalProperties: false, required: [], properties: { cwd: { type: 'string', description: 'Optional: filter the snapshot to a single project (working directory).' } } }
-
+//     会被替换成正文代码，把注释劈开 → 生成物语法崩。// import { BACKEND_MODEL_IDS, PRODUCT_DESCRIPTOR_ENV, CREDIT_ID_ALIASES, MODEL_DESCRIPTION, BACKEND_ENUM, accountConfigCandidates, productDescriptorCandidates, normalizeProductConfig, extractModelIds, parseCreditValue, formatCreditLabel, extractModelCredits, lookupModelCredits, backendModelCatalog, rememberAccountCatalog, getAccountCatalog, parseAccountModels, modelCatalogDetailed, formatModelCatalogText, cbCatalogSetHost, BACKEND_AUTH_IDS, CREDENTIAL_KEYS, readBackendAuthDomain, readDshWorkbuddyToken, resolveEnToken, fetchHelpModelsSync, cachedCliModels, currentPreferredBackend, parseHelpModels, RUN_PARAMS, CONTINUE_PARAMS, STATUS_PARAMS } from './codebuddy-catalog.mjs'// import { codebuddyModelsTool } from './codebuddy-models-tool.mjs'
 function defineProvider (deps = {}) {
   const env = deps.env || {}
   let host = null // attach 后保存 hostOpts（preset/dynamic/MCP 形态宿主能力）
@@ -1084,12 +1046,23 @@ function defineProvider (deps = {}) {
       }
     },
 
-    // codebuddy_models：列出本机 codebuddy 可用模型（静态表 ∪ 描述文件 ∪ 账号清单）。
+    // codebuddy_models：实时列出本机 codebuddy 可用模型（账号探测优先，回落 CLI 名册）。
     // 只在宿主有 spawn/fs 能力时注册（preset 注入 deps.process / MCP 注入 deps.nodeChild；
     // dynamic 沙箱形态省略）。**失败必须 ok:false + 可操作错误**，绝不静默返回空列表或
     // 伪造模型（工作手册红线 §7；对照 workbuddy-auth 的 catalog-store 静默降级 —— 不照抄）。
     extraTools: (deps.process || deps.nodeChild || deps.nodeFs) ? [codebuddyModelsTool({
-      env, deps, BACKEND_ENUM, normalizeBackend, resolveBackend, modelCatalogDetailed, getAccountCatalog
+      env, deps, BACKEND_ENUM, normalizeBackend, resolveBackend, modelCatalogDetailed, getAccountCatalog,
+      // faceEnv：让账号探测打到**请求的那个产品面**（与 buildArgv 完全同一套端点/凭据
+      // 注入规则）。缺了它，探测会走 CLI 自身默认登录面 —— 标着 codebuddy-en 实际却
+      // 问的是 codebuddy 面，得出的清单看着对其实是另一个面的（本轮修的就是这类偏差）。
+      faceEnv: (backend) => {
+        try {
+          const settings = (deps.settings && typeof deps.settings === 'object') ? deps.settings : {}
+          const authDomain = readBackendAuthDomain(backend, { env })
+          const tok = resolveEnToken(backend === 'codebuddy-en' ? settings.codebuddyEnToken : null, { env })
+          return endpointEnv(backend, settings.endpointOverride, authDomain, tok.token) || {}
+        } catch (e) { return {} }
+      }
     })] : [],
 
     // 设置分区（契约 §3）：keystone 统一文件 {codebuddy:{...}}；旧扁平文件的字段
@@ -1100,10 +1073,27 @@ function defineProvider (deps = {}) {
       defaults: () => normalizeSettings(null),
       normalize: (raw) => normalizeSettings(raw),
       meta() {
-        // defaultModel 下拉 = 默认后端（codebuddy 面）的带倍率目录（升级 CLI 后
-        // 自动同步）；其余三面目录不同，字段允许自定义输入即可覆盖。促销角标为
-        // 0.1.0 有意省略（见头注 TODO）。
-        const options = modelCatalogDetailed(DEFAULT_BACKEND, {}).map((x) => ({ value: x.id, label: x.label }))
+        // defaultModel 下拉 = **实时**取自 CLI（parseHelpModels 解析 `--help` 的
+        // "Currently supported: (...)"）。此前读磁盘 product.ioa.json 静态表，实测
+        // 落后于 CLI（16 项 vs CLI 19 项，且 2 个 id 已改名），是「列表不对」的根因。
+        // 面板必须同步返回，故用零网络的 cli-help roster；账号级权威清单由
+        // codebuddy_models 工具（异步探测）提供。
+        // 面跟随 preferredBackend（旧实现硬编码 codebuddy 面，无视用户设置）。
+        const face = (currentPreferredBackend() && normalizeBackend(currentPreferredBackend())) || DEFAULT_BACKEND
+        const live = cachedCliModels(face, () => fetchHelpModelsSync(env))
+        let options = []
+        let note = '账号实际可用性以服务端实时裁决；日常任务优先免费（x0.00）。'
+        if (live && live.ok && live.ids.length) {
+          const detail = modelCatalogDetailed(face, { env, accountModels: live.ids })
+          const byId = new Map(detail.map((x) => [x.id, x]))
+          options = live.ids.map((id) => {
+            const d = byId.get(id)
+            return { value: id, label: (d && d.label) || id }
+          })
+          note = '实时来自本机 codebuddy CLI 的声明名册（' + live.ids.length + ' 项，随 CLI 版本更新）；当前面：' + face + '。账号级权威清单见 codebuddy_models。'
+        } else {
+          note = '未能从 CLI 读取模型名册（' + String((live && live.error) || 'unknown') + '）—— 下拉为空，可手动输入模型 id。'
+        }
         return {
           titleSuffix: 'CodeBuddy',
           fields: [
@@ -1115,7 +1105,7 @@ function defineProvider (deps = {}) {
             {
               key: 'defaultModel', label: '默认模型', type: 'select', allowCustom: true, placeholder: '(CLI 默认)',
               options,
-              note: '账号实际可用性以服务端实时裁决（400 报文回吐权威清单，桥接自动缓存）。优先选能完成任务里最便宜的，日常任务优先免费（x0.00）。'
+              note
             },
             { key: 'codebuddyEnToken', label: 'WorkBuddy 国际版 Token', type: 'secret', note: '仅 backend="codebuddy-en" 需要。国际版登录 token 被 protector key 封装不落盘，只能手工提供；留空则自动尝试 DSH 凭据库的 WORKBUDDY_TOKEN。' },
             { key: 'endpointOverride', label: '端点覆盖', type: 'text', placeholder: 'https://…/v2', note: '一般留空：端点按登录域自动对齐（www.codebuddy.cn 等）。仅在需要强制指定 API 端点时填写，且必须自带 /v2。' }
@@ -1199,6 +1189,7 @@ function defineProvider (deps = {}) {
   return descriptor
 }
 
+// ── inlined from providers/codebuddy-catalog.mjs ──
 // providers/codebuddy-catalog.mjs — codebuddy 模型目录/积分/描述文件解析（纯逻辑）。
 //
 // 从 providers/codebuddy.mjs 拆出：主文件原 864 行远超 600 行红线（规则 §26）。
@@ -1431,6 +1422,206 @@ const BACKEND_ENUM = ['codebuddy', 'codebuddy-intl', 'codebuddy-ioa', 'codebuddy
     return v && v.length ? v.slice() : null
   }
 
+  // ── 实时模型清单（CLI 是一手权威来源，对齐 workbuddy-auth 的「权威白名单」思路）──
+  //
+  // 为什么不再以静态表/磁盘描述文件为主：实测本机 codebuddy CLI --
+  //   • 账号实时清单（用无效模型触发 400 报文）= 19 项
+  //   • CLI `--help` 声明的 roster         = 19 项，与账号清单完全一致
+  //   • 我们原先读的 product.ioa.json 静态表 = 16 项，且 2 个 id 已过时
+  //     （minimax-m3 → minimax-m3-pay、kimi-k3-1 → kimi-k3-2），另缺 4 个新模型。
+  //   静态表是「随包冻结」的，必然落后于 CLI，故只保留作倍率元数据与最后兜底。
+  //
+  // 两级实时来源（都不静默冒充权威数据，各带 source 标签）：
+  //   A. account-live —— 起 CLI 用无效模型探测「该账号当前支持」的清单（需该面已登录，
+  //      一次网络往返；对照 workbuddy-auth 的 agents[cli].models 白名单语义）。
+  //   B. cli-help     —— 解析 `--help` 的 "Currently supported: (...)"（零网络、随 CLI
+  //      版本自动更新；产品面级 roster）。
+  // 静态表仅作 credit 元数据与 descriptor-static 兜底标签，绝不冒充实时。
+
+  /** 解析 CLI `--help` 里声明的模型 roster。空/畸形输入返回 []。
+   *  ⚠️ 名册很长时 yargs 会在任意列**折行**（实测把 `minimax-m3-pay` 从中间断成
+   *  `minimax-` + `m3-pay`），若按行/按逗号直接切会丢项或产生残片（同一命令两次运行
+   *  给出 18/19 两种结果）。故先去掉括号内所有空白再按逗号切：逗号是唯一分隔符，
+   *  折行插入的空白一律视为噪声。 */
+  function parseHelpModels(helpText) {
+    const m = /Currently supported:\s*\(([^)]+)\)/.exec(String(helpText || ''))
+    if (!m) return []
+    const out = []
+    for (const raw of m[1].replace(/\s+/g, '').split(',')) {
+      const id = raw.trim()
+      if (id && /^[A-Za-z0-9_.\-]+$/.test(id) && out.indexOf(id) < 0) out.push(id)
+    }
+    return out
+  }
+
+  /** 解析 codebuddy CLI 的可执行候选（env > npm 全局 shim > PATH 名）。 */
+  function cbCatalogCliCandidates(env) {
+    const e = env || cbCatalogEnv || {}
+    const out = []
+    const push = (p) => { if (p && out.indexOf(p) < 0) out.push(p) }
+    if (e.CODEBUDDY_BIN) push(String(e.CODEBUDDY_BIN))
+    const joinP = (a, b) => cbCatalogPathJoin(a, b)
+    if (e.APPDATA) push(joinP(joinP(e.APPDATA, 'npm'), 'codebuddy.cmd'))
+    if (e.APPDATA) push(joinP(joinP(e.APPDATA, 'npm'), 'codebuddy'))
+    push('codebuddy')
+    return out
+  }
+
+  const CLI_MODEL_CACHE = new Map() // backend → { at, mode, ids }
+  const CLI_MODEL_TTL_MS = 5 * 60 * 1000
+
+  // Windows .cmd/.bat 需要经 shell（Node 安全限制），但 `shell:true` + args 数组会触发
+  // DEP0190（参数不转义）。这里统一做法：把命令与参数拼成【一个】字符串交给 shell，
+  // 参数各自按 Windows 规则加引号 —— 既避开 DEP0190，又保证含空格参数不被拆开。
+  function quoteWinArg(a) {
+    const s = String(a)
+    if (s === '') return '""'
+    if (!/[\s"&|<>^]/.test(s)) return s
+    return '"' + s.replace(/"/g, '\\"') + '"'
+  }
+  function cliCommandLine(exe, args) {
+    return [exe].concat(args || []).map(quoteWinArg).join(' ')
+  }
+
+  /** 把候选拆成 { cmd, prefixArgs }：.mjs/.js/.cjs 目标经 node 包装（测试夹具与自定义
+   *  入口都靠这条），其余原样。 */
+  function splitExeSpec(exe) {
+    if (/\.(mjs|cjs|js)$/i.test(String(exe))) {
+      const proc = globalThis.process
+      return { cmd: (proc && proc.execPath) ? proc.execPath : 'node', prefixArgs: [String(exe)] }
+    }
+    return { cmd: String(exe), prefixArgs: [] }
+  }
+
+  function cliSpawnSync(exe, args, opts) {
+    const proc = globalThis.process
+    const child = (proc && typeof proc.getBuiltinModule === 'function') ? proc.getBuiltinModule('node:child_process') : null
+    if (!child || typeof child.spawnSync !== 'function') return null
+    const base = Object.assign({
+      encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
+    }, opts || {})
+    const spec = splitExeSpec(exe)
+    const argv = spec.prefixArgs.concat(args || [])
+    const isCmd = /\.(cmd|bat)$/i.test(spec.cmd)
+    if (isCmd) base.shell = true
+    try {
+      // shell 形态不带 args 数组（否则 DEP0190）；非 shell 形态正常传数组。
+      return isCmd
+        ? child.spawnSync(cliCommandLine(spec.cmd, argv), base)
+        : child.spawnSync(spec.cmd, argv, base)
+    } catch (e) { return null }
+  }
+
+  /**
+   * 同步取「CLI 声明的 roster」（零网络，随 CLI 版本走）。
+   * @returns {{ok:boolean, ids:string[], mode:string, error?:string}}
+   */
+  function fetchHelpModelsSync(env, opts) {
+    const o = opts || {}
+    const cands = cbCatalogCliCandidates(env)
+    let lastErr = null
+    for (const exe of cands) {
+      const r = cliSpawnSync(exe, ['--help'], { timeout: Math.max(1000, Math.min(o.timeoutMs || 12000, 30000)) })
+      if (!r || r.error) { lastErr = 'spawn failed: ' + String((r && r.error && r.error.message) || 'unavailable'); continue }
+      const text = String(r.stdout || '') + String(r.stderr || '')
+      const ids = parseHelpModels(text)
+      if (ids.length) return { ok: true, ids, mode: 'cli-help', exe }
+      lastErr = 'no roster in --help output'
+    }
+    return { ok: false, ids: [], mode: 'cli-help', error: lastErr || 'codebuddy CLI not found (set CODEBUDDY_BIN)' }
+  }
+
+  /**
+   * 异步探测「该账号当前支持」的清单：用无效模型触发 CLI 的 400 报文。
+   * 对齐 workbuddy-auth 的权威白名单语义（服务器告诉我们这个账号能用什么）。
+   * @returns {Promise<{ok:boolean, ids:string[], mode:string, error?:string}>}
+   */
+  function probeAccountModels(env, opts) {
+    const o = opts || {}
+    const cands = cbCatalogCliCandidates(env)
+    const proc = globalThis.process
+    const child = (proc && typeof proc.getBuiltinModule === 'function') ? proc.getBuiltinModule('node:child_process') : null
+    if (!child || typeof child.spawn !== 'function') {
+      return Promise.resolve({ ok: false, ids: [], mode: 'account-live', error: 'no spawn capability in this host form' })
+    }
+    const extraEnv = o.envExtra || {}
+    return new Promise((resolve) => {
+      let idx = 0
+      // 记录每个候选的真实结局：区分「压根没找到 CLI」与「CLI 跑了但没吐账号名录」
+      // （后者通常是该面未登录 / 端点拒了）—— 报错文案必须能指导下一步，不能一律
+      // 说 "CLI not found"（本轮就踩到：codebuddy-en 无 token 时被误报成找不到 CLI）。
+      const reasons = []
+      const attempt = () => {
+        if (idx >= cands.length) {
+          resolve({
+            ok: false, ids: [], mode: 'account-live',
+            error: reasons.length ? reasons.join('; ') : 'no CLI candidate to probe',
+            notFound: reasons.every((r) => /not found|ENOENT|spawn/i.test(r))
+          })
+          return
+        }
+        const exe = cands[idx++]
+        let c
+        try {
+          // .cmd/.bat 需经 shell（Windows 安全限制）；.mjs/.js 经 node 包装。
+          // 与 cliSpawnSync 同一规则：shell 形态把命令拼成单字符串（避免 DEP0190）。
+          const spec = splitExeSpec(exe)
+          const isCmd = /\.(cmd|bat)$/i.test(spec.cmd)
+          const probeArgs = spec.prefixArgs.concat(['-p', 'hi', '--model', '__clb_probe_invalid__', '--output-format', 'text'])
+          const opts = {
+            stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+            env: Object.assign({}, proc.env, extraEnv)
+          }
+          c = isCmd
+            ? child.spawn(cliCommandLine(spec.cmd, probeArgs), Object.assign({ shell: true }, opts))
+            : child.spawn(spec.cmd, probeArgs, opts)
+        } catch (e) { reasons.push(exe + ': spawn threw ' + String(e && e.message || e)); attempt(); return }
+        let out = ''
+        const timer = setTimeout(() => { try { c.kill() } catch (e) { } }, Math.max(5000, Math.min(o.timeoutMs || 30000, 90000)))
+        const onData = (d) => { out += d; if (out.length > 400000) out = out.slice(-200000) }
+        c.stdout.on('data', onData)
+        c.stderr.on('data', onData)
+        c.on('error', (e) => {
+          clearTimeout(timer)
+          reasons.push(exe + ': ' + String((e && e.code) || (e && e.message) || 'spawn error'))
+          attempt()
+        })
+        c.on('close', (code) => {
+          clearTimeout(timer)
+          const ids = parseAccountModels(out)
+          if (ids && ids.length) { resolve({ ok: true, ids, mode: 'account-live', exe }); return }
+          const head = String(out).replace(/\s+/g, ' ').trim().slice(0, 160)
+          reasons.push(exe + ': exit ' + code + ', no account roster' + (head ? ' — ' + head : ''))
+          attempt()
+        })
+      }
+      attempt()
+    })
+  }
+
+  /** 缓存读写（面板每次渲染都会取，避免反复起进程）。 */
+  function cachedCliModels(backend, load, nowMs) {
+    const at = Number(nowMs) || Date.now()
+    const hit = CLI_MODEL_CACHE.get(backend)
+    if (hit && at - hit.at < CLI_MODEL_TTL_MS) return hit
+    const v = typeof load === 'function' ? load() : load
+    if (v && v.ok && v.ids && v.ids.length) CLI_MODEL_CACHE.set(backend, { at, mode: v.mode, ids: v.ids.slice() })
+    return v
+  }
+
+  /** 读统一设置文件里 codebuddy 分区的 preferredBackend（meta 需要它才知道列哪个面）。 */
+  function currentPreferredBackend() {
+    try {
+      const e = cbCatalogEnv || {}
+      const p = cbCatalogRead(e.CLI_BRIDGE_SETTINGS_FILE || cbCatalogPathJoin(
+        e.DSH_HOME || (e.APPDATA ? cbCatalogPathJoin(e.APPDATA, 'DSH Desktop', 'dsh-home') : ''), 'cli-bridge-settings.json'))
+      if (!p) return null
+      const all = JSON.parse(p)
+      const v = all && all.codebuddy && all.codebuddy.preferredBackend
+      return typeof v === 'string' && v ? v : null
+    } catch (err) { return null }
+  }
+
   // CLI 报错里解析「该账号当前支持的模型」（旧 core parseAccountModels verbatim）。
   function parseAccountModels(text) {
     const s = String(text || '')
@@ -1566,6 +1757,52 @@ const CREDENTIAL_KEYS = ['WORKBUDDY_TOKEN', 'WORKBUDDY_AI_TOKEN', 'CODEBUDDY_EN_
     return { token: null, source: null }
   }
 
+// ── 三工具 schema（旧 preset/codebuddy-first verbatim；契约 §8 红线）────────────
+// 纯数据，无依赖 —— 放这里是为了让主描述符留在 600 行红线内（规则 §26）。
+const RUN_PARAMS = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['prompt'],
+  properties: {
+    prompt: { type: 'string', description: 'The full task/instruction for codebuddy. Be complete and self-contained.' },
+    backend: { type: 'string', enum: BACKEND_ENUM, description: 'Which CLI face to dispatch to. codebuddy (default; domestic CodeBuddy npm CLI, product endpoint www.codebuddy.ai) for coding work; codebuddy-intl = CodeBuddy INTERNATIONAL face of the same npm CLI (product.ioa.json catalogue: claude-sonnet-5 / claude-opus-5 / gemini-3.1-pro / gpt-6-astra / hy3-ioa ...; aliases codebuddy-ioa / codebuddy-international) when the account is an international CodeBuddy account; codebuddy-en = WorkBuddy international edition (the WorkBuddyAI desktop bundled CLI at C:\\Program Files\\WorkBuddyAI, product endpoint www.workbuddy.ai; needs codebuddyEnToken unless DSH already holds a workbuddy key) — aliases workbuddy-en / workbuddy-ai also accepted; workbuddy = WorkBuddy domestic desktop CLI (product endpoint copilot.tencent.com, zero config), the office-scenario face: documents/slides/spreadsheets, knowledge-base lookups, image/video generation, WeChat/WeCom replies. New calls without a backend follow the user-preferred default backend (plugin settings). Continuing a session routes back to its owning backend automatically.' },
+    mode: { type: 'string', enum: ['auto', 'plan', 'accept-edits'], description: 'auto follows DSH plan state; plan = no writes; accept-edits = allow edits. Default auto.' },
+    model: { type: 'string', description: MODEL_DESCRIPTION },
+    effort: { type: 'string', enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], description: 'Optional reasoning effort.' },
+    maxTurns: { type: 'integer', description: 'Optional max agentic turns (1-500, default unlimited).' },
+    cwd: { type: 'string', description: 'Working directory for codebuddy. Defaults to the DSH workspace root.' },
+    addDirs: { type: 'array', items: { type: 'string' }, description: 'Extra directories to add to codebuddy workspace.' },
+    timeoutSec: { type: 'integer', description: 'Run timeout seconds (10-3600, default 300); a DSH-side hang guard force-terminates at timeout+60s.' },
+    background: { type: 'boolean', description: 'Run as a background job and return a jobId immediately.' }
+  }
+}
+const CONTINUE_PARAMS = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['prompt'],
+  properties: {
+    prompt: { type: 'string', description: 'Follow-up instruction for the ongoing codebuddy conversation.' },
+    sessionId: { type: 'string', description: 'codebuddy session id to resume (from a prior codebuddy_run result).' },
+    latest: { type: 'boolean', description: 'Continue the most recent codebuddy conversation instead of a specific id.' },
+    backend: { type: 'string', enum: BACKEND_ENUM, description: 'Which CLI face to resume on. codebuddy-en = WorkBuddy international (WorkBuddyAI desktop CLI; aliases workbuddy-en / workbuddy-ai accepted), workbuddy = WorkBuddy domestic desktop CLI. When omitted, the backend that owns the sessionId is used automatically; brand-new conversations follow the user-preferred default backend (plugin settings).' },
+    mode: { type: 'string', enum: ['auto', 'plan', 'accept-edits'], description: 'Execution mode; default auto.' },
+    model: { type: 'string', description: 'Optional model id (two layers: product face carries it, account licenses it; the credit multiplier of each id comes from the CLI descriptor — see codebuddy_run).' },
+    effort: { type: 'string', enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], description: 'Optional reasoning effort.' },
+    maxTurns: { type: 'integer', description: 'Optional max agentic turns.' },
+    cwd: { type: 'string', description: "Working directory for codebuddy; when resuming, defaults to the resumed session's project directory." },
+    timeoutSec: { type: 'integer', description: 'Run timeout seconds (10-3600, default 300); a DSH-side hang guard force-terminates at timeout+60s.' },
+    background: { type: 'boolean', description: 'Run as a background job and return a jobId immediately.' }
+  }
+}
+const STATUS_PARAMS = { type: 'object', additionalProperties: false, required: [], properties: { cwd: { type: 'string', description: 'Optional: filter the snapshot to a single project (working directory).' } } }
+
+// ── inlined from providers/codebuddy-models-tool.mjs ──
+// providers/codebuddy-models-tool.mjs — codebuddy_models 工具定义（纯逻辑）。
+//
+// 从 codebuddy-catalog.mjs 再拆出：两个文件都要留在 600 行红线内（规则 §26）。
+// scripts/build.mjs 会把 providers/codebuddy-*.mjs 全部内联进 dynamic 沙箱的同一个
+// 作用域，所以这里仍可引用 catalog 的函数（沙箱内天然可见）；ESM 形态走本文件的 import。
+// ⚠️ 注释里绝不写出口令标记字面量（build 全局替换会劈开注释 → 生成物语法崩）。// import { currentPreferredBackend, probeAccountModels, fetchHelpModelsSync } from './codebuddy-catalog.mjs'
 // ── codebuddy_models 工具定义（搬自主文件；纯逻辑，依赖经 ctx 注入）────────────
 // ctx = { env, deps, resolveBackend, modelCatalogDetailed, getAccountCatalog }
 function codebuddyModelsTool(ctx) {
@@ -1574,7 +1811,7 @@ function codebuddyModelsTool(ctx) {
   const env = c.env || {}
   return {
       name: 'codebuddy_models',
-      description: 'List the models available to the local codebuddy CLI for a given backend. Merges three layers: the built-in product descriptor id table, any descriptor file on disk, and the account catalogue harvested from a previous CLI run (authorized ids first). Each item carries its credit multiplier (x0.00 = free). Use it to pick a model before codebuddy_run, or to see which ids are free. Returns ok:false with an actionable error when no catalogue can be read — it never invents a model list.',
+      description: 'List the models the local codebuddy CLI can use for a given backend, read LIVE from the CLI. Primary source: an account probe (runs the CLI with a deliberately invalid model id, which makes the server print "Currently supported models for your account") — this is the authoritative licensed list for THIS account. If that face is not logged in, it falls back to the roster the installed CLI declares in --help and says so in the source field. Credit multipliers (x0.00 = free) come from the product descriptor as metadata. Returns ok:false with an actionable error when no live roster can be read — it never presents a frozen static table as if it were live.',
       inputSchema: {
         type: 'object', additionalProperties: false, required: [],
         properties: {
@@ -1596,41 +1833,73 @@ function codebuddyModelsTool(ctx) {
           lines.push('  ' + m.id + (m.creditLabel ? '  ' + m.creditLabel : '') + (flags.length ? '  [' + flags.join(',') + ']' : ''))
         }
         if (list.length > 40) lines.push('  … and ' + (list.length - 40) + ' more')
-        lines.push('source: ' + (v.source || 'unknown') + (v.accountCatalogue ? ' · account catalogue available' : ' · no account catalogue yet (run once to harvest)'))
+        const srcLabel = v.source === 'account-live'
+          ? 'account-live (authoritative for this account)'
+          : 'cli-help (installed CLI roster, not the licensed subset)'
+        lines.push('source: ' + srcLabel)
+        if (v.note) lines.push('note: ' + v.note)
         return [{ type: 'text', text: lines.join('\n') }]
       },
       async logic(args) {
         const a = args || {}
-        const preferred = (deps.settings && deps.settings.preferredBackend) || null
+        const preferred = currentPreferredBackend() || (deps.settings && deps.settings.preferredBackend) || null
         const backend = c.normalizeBackend(a.backend) || c.resolveBackend({}, null, preferred)
-        let items = []
-        try {
-          items = c.modelCatalogDetailed(backend, { env }) || []
-        } catch (e) {
-          return { ok: false, backend, error: 'catalogue read failed: ' + String(e && e.message || e) }
-        }
-        if (!Array.isArray(items) || !items.length) {
-          return {
-            ok: false, backend,
-            error: 'no model catalogue could be read for backend "' + backend + '". Check that the codebuddy CLI is installed (CODEBUDDY_BIN) and that its product descriptor exists, or run the CLI once so the account catalogue can be harvested.'
+
+        // ① 账号实时（最权威，对照 workbuddy-auth 的 agents[cli] 白名单语义）。
+        //    该面未登录/无 token 时探测会失败 —— 失败就**明确降级到 CLI 名册并标注**，
+        //    绝不把静态表冒充成账号可用清单。
+        const extraEnv = (c.faceEnv && c.faceEnv(backend)) || {}
+        const probe = await probeAccountModels(env, { envExtra: extraEnv, timeoutMs: a.timeoutMs })
+        let ids = null
+        let source = null
+        let note = ''
+        if (probe.ok && probe.ids.length) {
+          ids = probe.ids
+          source = 'account-live'
+        } else {
+          // ② CLI 声明的 roster（零网络，随 CLI 版本更新）。
+          const help = fetchHelpModelsSync(env, { timeoutMs: a.timeoutMs })
+          if (help.ok && help.ids.length) {
+            ids = help.ids
+            source = 'cli-help'
+            note = 'account probe unavailable (' + String(probe.error || 'not logged in for this face') +
+              '); showing the roster the installed CLI declares. It reflects the CLI version, not the licensed subset of this account.'
           }
         }
-        const acctIds = c.getAccountCatalog(backend)
-        const accountCatalogue = !!(acctIds && acctIds.length)
-        let list = items.map((x) => ({
-          id: x.id, authorized: !!x.authorized, credits: typeof x.credits === 'number' ? x.credits : null,
-          creditLabel: x.creditLabel || x.label || '', label: x.label || x.id
-        }))
+        if (!ids || !ids.length) {
+          return {
+            ok: false, backend,
+            error: 'no live model roster could be read for backend "' + backend + '". ' +
+              'Account probe: ' + String(probe.error || 'failed') + '. ' +
+              'Install/fix the codebuddy CLI (CODEBUDDY_BIN) and make sure this face is logged in, then retry.'
+          }
+        }
+
+        // ③ 倍率/授权元数据（来自描述文件；仅作标注，不参与「是否可用」判定）。
+        let detail = []
+        try { detail = c.modelCatalogDetailed(backend, { env, accountModels: ids }) || [] } catch (e) { detail = [] }
+        const byId = new Map(detail.map((x) => [x.id, x]))
+        let list = ids.map((id) => {
+          const d = byId.get(id)
+          return {
+            id,
+            authorized: d ? !!d.authorized : (source === 'account-live'),
+            credits: d && typeof d.credits === 'number' ? d.credits : null,
+            creditLabel: (d && (d.creditLabel || d.label)) || '',
+            label: (d && d.label) || id
+          }
+        })
         if (a.authorizedOnly) list = list.filter((m) => m.authorized)
         if (a.freeOnly) list = list.filter((m) => m.credits === 0)
         return {
           ok: true, backend, models: list, count: list.length,
-          source: accountCatalogue ? 'account+descriptor' : 'descriptor',
-          accountCatalogue
+          source, note: note || undefined,
+          probedAt: Date.now()
         }
       }
   }
-  }
+}
+
 
 // core/scheduling.mjs — CLI 调度（启用集合 + 调用优先级）单源纯逻辑。
 //

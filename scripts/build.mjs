@@ -16,7 +16,7 @@
 //
 // 用法：node scripts/build.mjs [--check]
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
@@ -85,18 +85,27 @@ function buildDynamicHost(id) {
   // 模板没有 /*__SCHED__*/ 占位（旧模板）→ 不注入，保持向后兼容。
   const sched = stripModuleSyntax(read('core/scheduling.mjs'), 'core/scheduling.mjs')
     + '\nconst SCHED_ALL_IDS = ' + JSON.stringify(ids) + '\n'
-  // 可选的第二段内联：providers/<id>-catalog.mjs。存在且模板声明了占位符才注入 ——
-  // 语义与 __SCHED__ 完全同构（模板没有该占位符 → 不注入，向后兼容）。
-  // 目的：providers/<id>.mjs 超 600 行红线时把纯逻辑拆出去，沙箱里仍是单脚本。
-  const extraRel = 'providers/' + id + '-catalog.mjs'
-  const extra = existsSync(join(ROOT, extraRel)) ? stripModuleSyntax(read(extraRel), extraRel) : null
+  // 可选的多段内联：providers/<id>-*.mjs（如 <id>-catalog.mjs、<id>-models-tool.mjs）。
+  // 语义与 __SCHED__ 同构（模板没有该占位符 → 不注入，向后兼容）。
+  // 目的：providers/<id>.mjs 超 600 行红线时把纯逻辑拆出去，沙箱里仍是**单脚本**。
+  // 支持多个片文件（按文件名字典序拼接）而不是写死一个：每撞一次 600 行红线就改一次
+  // 构建器的做法不可持续，泛用性与顺序确定性都要有。
+  const extraFiles = readdirSync(join(ROOT, 'providers'))
+    .filter((f) => f.startsWith(id + '-') && f.endsWith('.mjs'))
+    .sort()
+  const extra = extraFiles.length
+    ? extraFiles.map((f) => {
+        const rel = 'providers/' + f
+        return '// ── inlined from ' + rel + ' ──\n' + stripModuleSyntax(read(rel), rel)
+      }).join('\n')
+    : null
   if (!tpl.includes('/*__KIT__*/') || !tpl.includes('/*__PROVIDER__*/')) {
     throw new Error(tplRel + ' missing /*__KIT__*/ or /*__PROVIDER__*/ placeholder')
   }
   let out = tpl.replace('/*__KIT__*/', () => kit).replace('/*__PROVIDER__*/', () => prov)
   // __EXTRA__ 放在 KIT/PROVIDER 之后替换：避免其内容里若含同名占位符被二次展开。
   if (out.includes('/*__EXTRA__*/')) {
-    if (!extra) throw new Error(tplRel + ': __EXTRA__ placeholder present but ' + extraRel + ' missing')
+    if (!extra) throw new Error(tplRel + ': __EXTRA__ placeholder present but no providers/' + id + '-*.mjs fragment found')
     out = out.replace('/*__EXTRA__*/', () => extra)
   } else if (tpl.includes('/*__EXTRA__*/')) throw new Error(tplRel + ': __EXTRA__ placeholder vanished after other replacements')
   if (out.includes('/*__SCHED__*/')) out = out.replace('/*__SCHED__*/', () => sched)
