@@ -18,6 +18,11 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
   （source 标注、解析失败大声报错），但**刻意不照抄它的静态降级**：拿不到目录时返回
   `ok:false` + 可操作错误，绝不静默返回空列表或伪造模型。
 
+- **预设只注册启用面**（行为变更，用户定案）：`declareBridgePresets` 不再「恒常注册」全部
+  preset，而是只注册 `_scheduling.enabled` 里的 provider。停用的 CLI 不再在预设列表占位
+  （选中它等于立刻撞上一个零注册的桥）。代价：停用后旧会话头若指向该 preset 会找不到；
+  重新启用即恢复（注册表在宿主启动时重建）。调度不可得时仍全量注册，绝不因读不到配置清空预设。
+
 ### Changed
 - **mimo 去 desktop 化**（用户定案）：MiMo 免费 API 服务已被官方终止（CLI 报
   `MiMo free API service has ended`）+ 本机 0 凭据，故取消 `mimo-desktop` 后端，只走

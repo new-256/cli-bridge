@@ -67,28 +67,25 @@ export async function buildPresetDefinition(id) {
 }
 
 /**
- * 在 indicator 的 ctx 上挂「agentPresets 就绪 → 注册三个 preset」等待器。
+ * 在 indicator 的 ctx 上挂「agentPresets 就绪 → 注册启用面的 preset」等待器。
  * 返回每个 provider 的注册状态数组（诊断用）；任何异常都不外抛。
  *
- * 调度语义（0.2.0）：三个 preset 恒常注册（可读性/可回退优先 —— 禁用≠从目录消失，
- * 用户随时可切进禁用 preset 排查），注册【顺序】按 priority 排列；真正的「不启用」
- * 发生在桥接插件 apply()：读 _scheduling，禁用面不注册任何工具/政策段（安全且即时，
- * 改设置只影响下次会话，无需重新注册表）。opts.ids 显式传入时跳过调度排序。
+ * 调度语义（0.2.5 起按 enabled 过滤注册，用户定案）：
+ *   只注册**启用面**的 preset —— 未启用的 provider 不出现在预设目录里。
+ *   0.2.0 曾是「恒常注册、禁用只影响 apply()」，但用户明确要求：停用的 CLI 不该在
+ *   预设列表里占位（选中它等于立刻撞到一个零注册的桥，纯噪音）。
+ *   代价：停用后旧会话头若仍指向该 preset，进入该会话会找不到预设 —— 这是停用的
+ *   应有语义；重新启用即恢复（注册表在宿主启动时重建）。
+ *   opts.ids 显式传入时跳过调度过滤与排序（测试/手工可控）。
  */
 export function declareBridgePresets(ctx, opts) {
   let ids = (opts && opts.ids) || PROVIDER_IDS_FALLBACK
   if (!opts || !opts.ids) {
     try {
       const sched = resolveScheduling(PROVIDER_IDS_FALLBACK, opts && opts.io)
-      // 顺序 = 启用项（order = priority ∩ enabled）在前，禁用项按 priority 顺序补尾。
-      // UI 卡片序 / preset 目录序 / MCP 工具序三处因此永远一致（priority 是总轴，
-      // enabled 只决定 apply() 里注不注册工具，不决定它排在哪儿）。
-      const tail = sched.priority.filter((x) => sched.order.indexOf(x) < 0)
-      const ordered = sched.order.slice()
-      for (const id of tail) ordered.push(id)
-      for (const id of PROVIDER_IDS_FALLBACK) if (ordered.indexOf(id) < 0) ordered.push(id)
-      ids = ordered
-    } catch (e) { /* 调度不可得 = 缺省顺序，注册不受影响 */ }
+      // 只取 order（= priority ∩ enabled），不再补禁用项到尾部。
+      ids = sched.order.slice()
+    } catch (e) { /* 调度不可得 = 缺省全量注册，绝不因读不到配置而清空预设 */ }
   }
   const out = []
   if (typeof ctx.inject !== 'function') return out

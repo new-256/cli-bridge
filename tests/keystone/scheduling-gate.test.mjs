@@ -194,7 +194,9 @@ test('declareBridgePresets：缺省 = 注册表顺序注册全部 preset', async
   }
 })
 
-test('declareBridgePresets：priority 决定注册顺序，禁用面仍注册（不进目录消失）', async () => {
+// 0.2.5 行为变更（用户定案）：预设只注册**启用面**。
+// 停用的 CLI 不该在预设列表里占位 —— 选中它等于立刻撞上一个零注册的桥，纯噪音。
+test('declareBridgePresets：只注册启用的 provider，禁用面不进预设目录', async () => {
   const p = settingsFileWith({ _scheduling: { enabled: ['codebuddy'], priority: ['codebuddy', 'mimo', 'agy'] } })
   const prevFile = process.env.CLI_BRIDGE_SETTINGS_FILE
   process.env.CLI_BRIDGE_SETTINGS_FILE = p
@@ -207,10 +209,24 @@ test('declareBridgePresets：priority 决定注册顺序，禁用面仍注册（
   }
   await c.flush()
   const ids = c.seen.filter((x) => typeof x === 'string')
-  assert.equal(ids.length, IDS.length, 'all presets still registered')
-  assert.equal(ids[0], PRESET_OF.codebuddy, 'highest-priority provider registered first')
-  // 前三位 = priority 顺序；未列入 priority 的（本例 opencode）按注册表序补在末尾。
-  assert.deepEqual(ids.slice(0, 3), ['codebuddy', 'mimo', 'agy'].map((id) => PRESET_OF[id]), 'order = priority, disabled kept at tail')
+  // 只启用 codebuddy → 只有 codebuddy-first 被注册；mimo/agy/opencode 均不出现。
+  assert.deepEqual(ids, [PRESET_OF.codebuddy], 'only enabled providers register their preset')
+})
+
+test('declareBridgePresets：多面启用时按 priority 顺序注册', async () => {
+  const p = settingsFileWith({ _scheduling: { enabled: ['agy', 'mimo'], priority: ['mimo', 'agy', 'codebuddy'] } })
+  const prevFile = process.env.CLI_BRIDGE_SETTINGS_FILE
+  process.env.CLI_BRIDGE_SETTINGS_FILE = p
+  const prevHome = process.env.DSH_HOME
+  process.env.DSH_HOME = 'X:\\__never_used__'
+  let c
+  try { c = captureOrder(undefined) } finally {
+    if (prevFile === undefined) delete process.env.CLI_BRIDGE_SETTINGS_FILE; else process.env.CLI_BRIDGE_SETTINGS_FILE = prevFile
+    if (prevHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevHome
+  }
+  await c.flush()
+  const ids = c.seen.filter((x) => typeof x === 'string')
+  assert.deepEqual(ids, [PRESET_OF.mimo, PRESET_OF.agy], 'order = priority ∩ enabled')
 })
 
 test('declareBridgePresets：opts.ids 显式传入 = 跳过调度（测试/手工可控）', async () => {
