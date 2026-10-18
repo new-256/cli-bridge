@@ -9,6 +9,54 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 > - CodeBuddy 线：[docs/history/codebuddy/CHANGELOG.md](docs/history/codebuddy/CHANGELOG.md)（终版 1.6.2）
 > - MiMo 线：[docs/history/mimo/CHANGELOG.md](docs/history/mimo/CHANGELOG.md)（终版 1.2.9）
 
+## [0.2.8] - 2026-10-18
+
+> 用户使用 agy 优先模式时整轮失败：
+> `unknown prompt variable "{{cwd}}" in section "deployment:persona-suffix"; registered variables: provider, model`。
+> 根因是**预设从旧版上游模板转录**，继承了上游在实装 `0.2.1-alpha.5` 已删除的三类写法。
+> 完整方案与逐项取证：[docs/audits/2026-10-18-preset-0.2.1-contract-fix.md](docs/audits/2026-10-18-preset-0.2.1-contract-fix.md)。
+
+### Fixed
+
+- **预设整体不可用：persona `suffix` 里的 `{{cwd}}` 不是注册变量**。`dsh-system-prompt` 的
+  `interpolate()` 对 `{{name}}` 严格解析（须匹配 `/^[a-z][a-z0-9_]*$/` 且**已注册**），
+  未注册引用会在**任何模型请求之前**抛错 ⇒ 该预设完全不可用。当前循环只注册 `provider` 与
+  `model`（`dsh-agent-loop`），工作目录已改由 working-directory 服务以「不插值的用户上下文」
+  提供 —— 官方预设的 persona 因此**只有 `prefix`**。已在 `standard-base.mjs` 与
+  agy/mimo/opencode 三个单源里删除 `suffix`，并重新生成四个 `agent.cordis.yml`。
+- **`cordis-mimo` 整个预设挂载失败：`tool-subagent.config.persona`**。`dsh-tool-subagent`
+  0.2.1 起在 `apply()` 里对 `persona`/`toolFilter` **显式 throw**
+  （"…no longer supported; configure persona and tool plugins in an Agent Preset and select it
+  with agentPreset (spawn only)"）。原委派人格已**迁移**为成员预设（见 Added），能力未丢失。
+- **死配置 `backgroundMode`**（四行委派行都有）。该字段已从 DSH 全部包移除，且实装 schema
+  **会放行并保留**它（`Config['~standard'].validate` 无 issues；schemastery 没有 strict 开关），
+  只是**无人读取** ⇒ 静默**忽略**而非丢弃：表面声明 `continuable`/`one-shot` 却毫无效果，
+  且**运行时不报错**。已删除。
+
+### Added
+
+- **成员预设 `cordis-mimo-member`**（`preset/mimo-member/plugin-list.mjs`）：人格 = 旧委派指令
+  verbatim；工具面 = mimo 桥接行（子 agent 必须能调 `mimo_run` 才能"派活"）+ 只读文件面
+  （旧 `toolFilter` 白名单的新表达：`write`/`edit` 直接不存在）。`cordis-mimo` 的 **spawn**
+  行以 `agentPreset` 引用它；**fork 行不设**（`agentPreset` 仅 in-process spawn 支持，
+  fork/外部后端会 reject）。成员预设**先于**主预设注册（委派行 `validate()` 会经
+  `presets.readDocument(id)` 校验引用存在）。
+- **防回归闸门 `tests/keystone/persona-prompt-vars.test.mjs`**：persona 的 `{{var}}` 必须在注册
+  白名单内且不设 `suffix`；`tool-subagent` 行不得带已删字段；委派行的 `agentPreset` 必须等于
+  成员预设 `meta.id` 且只出现在 `spawn` 行。内存单源 + 磁盘生成物双层。三道闸门均已实测
+  **按正确原因变红**后再保留。
+
+### Changed
+
+- `tests/keystone/scheduling-gate.test.mjs` 的注册顺序期望改为从成员表派生
+  （`[...memberPresetIds(ids), ...provider presets]`），不硬编码。
+
+### 未跟进（能力面差异，非缺陷）
+
+- 相对实装 `dsh-web-app@0.2.1-alpha.5` 的官方 standard 预设（35 行），本包基线（对齐官方
+  `0.1.7-rc.1`，33 行）缺 `time-context`、`tool-schedule`、`tool-plugin-market`。属能力面差异，
+  是否跟进待定。
+
 ## [0.2.7] - 2026-10-18
 
 > 0.2.6 发布后立即发现两件事必须纠正，故 0.2.7 紧随其后。
