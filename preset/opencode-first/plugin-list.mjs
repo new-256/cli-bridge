@@ -15,11 +15,13 @@ export const meta = {
 
 export function buildPlugins(deps) {
   const rows = standardPluginRows()
-  // persona 段：与三家旧 preset 同构（dsh-persona 要求 prefix 必填 + suffix 可选）。
+  // persona 段：prefix 与三家旧 preset 同构（dsh-persona 要求 prefix 必填）。
+  // 2026-10-18：不再设置 suffix —— DSH 只注册 provider/model 两个变量，工作目录由
+  // working-directory 服务以不插值的用户上下文提供，{{cwd}} 会让本预设整轮组装失败。
   const persona = rows.find((r) => r.id === 'persona')
   if (persona && persona.config) {
     persona.config.prefix = 'You are a coding agent powered by the {{model}} model.'
-    persona.config.suffix = 'Your working directory is {{cwd}}.'
+    delete persona.config.suffix
   }
   rows.push(bridgeRow('opencode', deps && deps.bridgeName))
   return rows

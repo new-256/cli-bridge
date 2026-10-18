@@ -18,9 +18,10 @@ test('桥接行落地为包名入口（不是旧仓相对文件路径）', () =>
   assert.ok(!YML.includes('./agy-first-bridge.mjs'), 'no stale relative entry from the old repo')
 })
 
-test('persona 行保持旧 cordis-agy 语义（prefix/suffix 逐字）', () => {
+test('persona 行 prefix 保留、suffix 已移除（{{cwd}} 不是注册变量）', () => {
   assert.match(YML, /You are a coding agent powered by the \{\{model\}\} model\./)
-  assert.match(YML, /Your working directory is \{\{cwd\}\}\./)
+  // 生成物里也不能残留 {{cwd}}：它不是 DSH 注册的提示词变量，会让预设整轮组装失败。
+  assert.ok(!YML.includes('{{cwd}}'), 'suffix {{cwd}} must be gone from the generated preset')
 })
 
 test('!!js disabled 表达式按块标量落地（tool-bash/tool-pwsh 平台互斥）', () => {

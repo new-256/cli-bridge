@@ -26,13 +26,16 @@ export const PLAN_MODE_SECTION = [
 
 /**
  * 官方 standard preset 的插件行表（不含 persona 差异与桥接行）。
- * persona 行返回【副本】供 provider 修改 prefix/suffix；其余行按原样返回。
+ * persona 行返回【副本】供 provider 修改 prefix；其余行按原样返回。
  * @returns {object[]}
  */
 export function standardPluginRows() {
   return [
+    // persona 只留 prefix。DSH 的提示词循环只注册 provider/model 两个变量
+    // （dsh-agent-loop），工作目录由 working-directory 服务以「不执行插值的用户
+    // 上下文」提供。写 {{cwd}} 会在组装期抛 unknown prompt variable，导致整个
+    // 预设不可用（2026-10-18 实测）。官方 presets 全部不带 suffix。
     { id: 'persona', name: '@deepseek-ai/dsh-persona', config: {
-      suffix: 'Your working directory is {{cwd}}.',
       prefix: 'You are a coding agent powered by the {{model}} model.',
     } },
     { id: 'agent-instructions', name: '@deepseek-ai/dsh-agent-instructions', config: { maxBytes: 65536 } },
@@ -66,20 +69,25 @@ export function standardPluginRows() {
     {
       id: 'delegation', name: 'cordis:group', group: true,
       isolate: { workflowEngine: true },
+      // 2026-10-18：移除 backgroundMode —— dsh-tool-subagent 0.2.1（当前 0.2.1-alpha.5）
+      // 已删除该字段，且 Config 不是 strict，写在这里会被**静默丢弃**：表面声明
+      // continuable/one-shot，实际由 subagent 运行时自行决定，属会骗人的死配置。
+      // 当前 schema 接受：provider / toolName / modelSelectionSettings /
+      // agentOptions / agentPreset / allowedAgentPresets / maxDepth。
       config: [
         { id: 'tool-subagent-control', name: '@deepseek-ai/dsh-tool-subagent-control' },
         { id: 'tool-subagent-list-agents', name: '@deepseek-ai/dsh-tool-subagent-control/list-agents' },
         { id: 'tool-subagent', name: '@deepseek-ai/dsh-tool-subagent', config: {
-          provider: 'spawn', toolName: 'subagent', modelSelectionSettings: true, backgroundMode: 'continuable',
+          provider: 'spawn', toolName: 'subagent', modelSelectionSettings: true,
         } },
         { id: 'tool-subagent-fork', name: '@deepseek-ai/dsh-tool-subagent', config: {
-          provider: 'fork', toolName: 'subagent_fork', backgroundMode: 'continuable',
+          provider: 'fork', toolName: 'subagent_fork',
         } },
         { id: 'tool-subagent-codex', name: '@deepseek-ai/dsh-tool-subagent', disabled: true, config: {
-          provider: 'codex', toolName: 'subagent_codex', backgroundMode: 'one-shot', maxDepth: 'provider-managed',
+          provider: 'codex', toolName: 'subagent_codex', maxDepth: 'provider-managed',
         } },
         { id: 'tool-subagent-claude-code', name: '@deepseek-ai/dsh-tool-subagent', disabled: true, config: {
-          provider: 'claude-code', toolName: 'subagent_claude_code', backgroundMode: 'one-shot', maxDepth: 'provider-managed',
+          provider: 'claude-code', toolName: 'subagent_claude_code', maxDepth: 'provider-managed',
         } },
         { id: 'workflow-ptc', name: '@deepseek-ai/dsh-workflow-ptc', config: { provider: 'spawn' } },
         { id: 'tool-workflow', name: '@deepseek-ai/dsh-tool-workflow' },

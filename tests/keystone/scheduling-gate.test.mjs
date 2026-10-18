@@ -16,7 +16,7 @@ import { apply as applyAgy } from '../../preset/agy-first/cli-bridge.mjs'
 import { apply as applyCodebuddy } from '../../preset/codebuddy-first/cli-bridge.mjs'
 import { apply as applyMimo } from '../../preset/mimo-first/cli-bridge.mjs'
 import { apply as applyOpencode } from '../../preset/opencode-first/cli-bridge.mjs'
-import { declareBridgePresets } from '../../home-plugin/cli-bridge-indicator/lib/preset-declarations.mjs'
+import { declareBridgePresets, memberPresetIds } from '../../home-plugin/cli-bridge-indicator/lib/preset-declarations.mjs'
 import { PROVIDER_IDS, providerMeta } from '../../providers/registry.mjs'
 
 // 单一 id 轴（契约 §3.1）：id 清单与 apply 映射都从注册表派生，禁止硬编码三家。
@@ -186,8 +186,10 @@ test('declareBridgePresets：缺省 = 注册表顺序注册全部 preset', async
     const c = captureOrder({ env: process.env, readFileSync: () => { throw new Error('ENOENT') }, path: null })
     await c.flush()
     const ids = c.seen.filter((x) => typeof x === 'string').map((x) => x)
-    // 期望 = 注册表顺序的 preset id 序列（从描述符派生，新增 provider 零改动）。
-    assert.deepEqual(ids, IDS.map((id) => PRESET_OF[id]), 'all providers registered in registry order')
+    // 期望 = 先注册各 provider 的【成员预设】（0.2.1 起角色人格只能作为独立预设存在，
+    // 且必须先于主预设：委派行 validate() 会经 readDocument 校验引用存在），
+    // 再按注册表顺序注册 provider preset（从描述符派生，新增 provider 零改动）。
+    assert.deepEqual(ids, [...memberPresetIds(IDS), ...IDS.map((id) => PRESET_OF[id])], 'member presets first, then all providers in registry order')
   } finally {
     if (prevFile === undefined) delete process.env.CLI_BRIDGE_SETTINGS_FILE; else process.env.CLI_BRIDGE_SETTINGS_FILE = prevFile
     if (prevPin === undefined) delete process.env.CLI_BRIDGE_PROVIDER; else process.env.CLI_BRIDGE_PROVIDER = prevPin
@@ -209,8 +211,9 @@ test('declareBridgePresets：只注册启用的 provider，禁用面不进预设
   }
   await c.flush()
   const ids = c.seen.filter((x) => typeof x === 'string')
-  // 只启用 codebuddy → 只有 codebuddy-first 被注册；mimo/agy/opencode 均不出现。
-  assert.deepEqual(ids, [PRESET_OF.codebuddy], 'only enabled providers register their preset')
+  // 只启用 codebuddy → 只有 codebuddy-first 被注册；mimo/agy/opencode 均不出现
+  // （codebuddy 没有成员预设，故此处不出现任何成员 id）。
+  assert.deepEqual(ids, [...memberPresetIds(['codebuddy']), PRESET_OF.codebuddy], 'only enabled providers register their preset')
 })
 
 test('declareBridgePresets：多面启用时按 priority 顺序注册', async () => {
@@ -226,7 +229,8 @@ test('declareBridgePresets：多面启用时按 priority 顺序注册', async ()
   }
   await c.flush()
   const ids = c.seen.filter((x) => typeof x === 'string')
-  assert.deepEqual(ids, [PRESET_OF.mimo, PRESET_OF.agy], 'order = priority ∩ enabled')
+  // 成员预设先于其所属 provider 的主预设；provider 之间按 priority ∩ enabled。
+  assert.deepEqual(ids, [...memberPresetIds(['agy', 'mimo']), PRESET_OF.mimo, PRESET_OF.agy], 'members first, then order = priority ∩ enabled')
 })
 
 test('declareBridgePresets：opts.ids 显式传入 = 跳过调度（测试/手工可控）', async () => {
@@ -249,7 +253,7 @@ test('declareBridgePresets：opts.ids 显式传入 = 跳过调度（测试/手�
   })
   const seen = c
   await new Promise((r) => setTimeout(r, 50))
-  assert.equal(seen.filter((x) => typeof x === 'string').length, IDS.length, 'explicit ids ignore the all-disabled file')
+  assert.equal(seen.filter((x) => typeof x === 'string').length, IDS.length + memberPresetIds(IDS).length, 'explicit ids ignore the all-disabled file (members included)')
 })
 
 test('declareBridgePresets：ctx 无 inject（旧宿主/非组合根）→ 返回空表不抛', () => {

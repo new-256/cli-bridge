@@ -16,10 +16,13 @@ export function buildPlugins(deps) {
   const rows = standardPluginRows()
   // 旧仓 agent.cordis.yml persona 段 verbatim（v1.5.15：dsh-persona 要求
   // prefix 必填 + suffix 可选；旧单 text: 字段被 schema 拒绝）。
+  // 2026-10-18：不再设置 suffix —— 当前 DSH 只注册 provider/model 两个提示词变量，
+  // 工作目录由 working-directory 服务作为不插值的用户上下文提供，写 {{cwd}} 会让
+  // 本预设整轮组装失败（unknown prompt variable）。delete 兼防基座再引入 suffix。
   const persona = rows.find((r) => r.id === 'persona')
   if (persona && persona.config) {
     persona.config.prefix = 'You are a coding agent powered by the {{model}} model.'
-    persona.config.suffix = 'Your working directory is {{cwd}}.'
+    delete persona.config.suffix
   }
   rows.push(bridgeRow('agy', deps && deps.bridgeName))
   return rows

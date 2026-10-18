@@ -4,7 +4,6 @@
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
-    suffix: 'Your working directory is {{cwd}}.'
     prefix: 'You are a coding agent powered by the {{model}} model.'
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
@@ -86,22 +85,18 @@
         provider: spawn
         toolName: subagent
         modelSelectionSettings: true
-        backgroundMode: continuable
-        persona: 'Delegation directive: you are a child agent in a MiMo-first session. Before doing any coding, building, debugging, or multi-file investigation work yourself, check whether the mimo_run tool (or the MCP form mcp__mimo__mimo_run) is available to you; if it is, dispatch that work to mimo first per the MiMo-first policy, then verify its output with your own read-only tools. Reserve your own direct work for quick read-only lookups and final verification.'
+        agentPreset: cordis-mimo-member
     - id: tool-subagent-fork
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
         provider: fork
         toolName: subagent_fork
-        backgroundMode: continuable
-        persona: 'Delegation directive: you are a child agent in a MiMo-first session. Before doing any coding, building, debugging, or multi-file investigation work yourself, check whether the mimo_run tool (or the MCP form mcp__mimo__mimo_run) is available to you; if it is, dispatch that work to mimo first per the MiMo-first policy, then verify its output with your own read-only tools. Reserve your own direct work for quick read-only lookups and final verification.'
     - id: tool-subagent-codex
       name: '@deepseek-ai/dsh-tool-subagent'
       disabled: true
       config:
         provider: codex
         toolName: subagent_codex
-        backgroundMode: one-shot
         maxDepth: provider-managed
     - id: tool-subagent-claude-code
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -109,7 +104,6 @@
       config:
         provider: claude-code
         toolName: subagent_claude_code
-        backgroundMode: one-shot
         maxDepth: provider-managed
     - id: workflow-ptc
       name: '@deepseek-ai/dsh-workflow-ptc'

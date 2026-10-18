@@ -29,13 +29,16 @@ test('桥接行：id/name 与 package.json exports 子路径一致', () => {
   assert.equal(pkg.exports['./preset-codebuddy'], './preset/codebuddy-first/cli-bridge.mjs')
 })
 
-test('persona 行保持官方 standard 文案（codebuddy 侧零定制 —— 与 agy 同款）', () => {
+test('persona 行只带 prefix（suffix 必须缺席 —— codebuddy 侧零定制）', () => {
   const rows = buildPlugins({})
   const persona = rows.find((r) => r.id === 'persona')
   assert.ok(persona, 'persona row present')
   assert.equal(persona.name, '@deepseek-ai/dsh-persona')
   assert.equal(persona.config.prefix, 'You are a coding agent powered by the {{model}} model.')
-  assert.equal(persona.config.suffix, 'Your working directory is {{cwd}}.')
+  // {{cwd}} 不是注册变量（当前 DSH 只注册 provider/model），写进 persona 会在提示词
+  // 组装期抛 unknown prompt variable，使整个预设不可用。工作目录改由 working-directory
+  // 服务以「不插值的用户上下文」提供，所以这里必须【没有】suffix。
+  assert.equal(persona.config.suffix, undefined)
 })
 
 test('!!js 表达式保持 {__jsExpr} 字面量形态（不编译成真函数）', () => {

@@ -1,7 +1,6 @@
 // preset/mimo-first/plugin-list.mjs — cordis-mimo 预设的单源插件清单（PROVIDER-CONTRACT §5）。
 //
-// = 官方 standard 基线（standard-base.mjs）+ mimo 桥接行 + persona/委派差异（旧仓
-// preset/mimo-first/agent.cordis.yml 的 persona 与 tool-subagent 委派文案 verbatim）。
+// = 官方 standard 基线（standard-base.mjs）+ mimo 桥接行 + 委派差异。
 // preset id 'cordis-mimo' 是旧会话头引用，不可变。
 import { standardPluginRows, bridgeRow } from '../standard-base.mjs'
 
@@ -12,26 +11,33 @@ export const meta = {
   order: 10
 }
 
-// 旧 agent.cordis.yml 的 tool-subagent（spawn/fork）委派指令文案 verbatim：
-// 子 agent 在 MiMo-first 会话里优先把编码工作派给 mimo_run。
-const MIMO_DELEGATION_PERSONA = 'Delegation directive: you are a child agent in a MiMo-first session. Before doing any coding, building, debugging, or multi-file investigation work yourself, check whether the mimo_run tool (or the MCP form mcp__mimo__mimo_run) is available to you; if it is, dispatch that work to mimo first per the MiMo-first policy, then verify its output with your own read-only tools. Reserve your own direct work for quick read-only lookups and final verification.'
+/**
+ * 子 agent 所用的成员预设 id（人格与工具面在 preset/mimo-member/plugin-list.mjs）。
+ * 0.2.1 起角色人格不能再写在 dsh-tool-subagent 行上，只能由 agentPreset 指向独立预设。
+ */
+export const MEMBER_PRESET_ID = 'cordis-mimo-member'
 
 export function buildPlugins(deps) {
   const rows = standardPluginRows()
-  // persona 行：旧仓 mimo 的 prefix/suffix 与官方 standard 逐字一致（{{model}}/{{cwd}}），
-  // 无差异；保留取回逻辑以便上游若分化时单点修改。
+  // persona 行：prefix 与官方 standard 逐字一致（{{model}}）。
+  // 2026-10-18：不再设置 suffix —— DSH 只注册 provider/model 两个变量，工作目录由
+  // working-directory 服务以不插值的用户上下文提供，{{cwd}} 会让本预设整轮组装失败。
   const persona = rows.find((r) => r.id === 'persona')
   if (persona && persona.config) {
     persona.config.prefix = 'You are a coding agent powered by the {{model}} model.'
-    persona.config.suffix = 'Your working directory is {{cwd}}.'
+    delete persona.config.suffix
   }
-  // 委派组：给 spawn/fork 两个 tool-subagent 行注入 MiMo-first 委派 persona（旧 yml）。
+  // 委派组：0.2.1 起人格与工具面属于【独立成员预设】，委派行只用 agentPreset 选择它。
   const delegation = rows.find((r) => r.id === 'delegation')
   if (delegation && Array.isArray(delegation.config)) {
     for (const child of delegation.config) {
-      if (child && child.name === '@deepseek-ai/dsh-tool-subagent' && child.config && (child.config.provider === 'spawn' || child.config.provider === 'fork')) {
-        child.config.persona = MIMO_DELEGATION_PERSONA
-      }
+      if (!child || child.name !== '@deepseek-ai/dsh-tool-subagent' || !child.config) continue
+      // persona/toolFilter 会被 dsh-tool-subagent 的 apply() 直接 throw，写进去就是
+      // 整个预设挂载失败 —— 一律删除（人格已迁到成员预设）。
+      delete child.config.persona
+      delete child.config.toolFilter
+      // agentPreset 只有 in-process spawn 支持；fork 与外部后端会拒绝它，故只给 spawn。
+      if (child.config.provider === 'spawn') child.config.agentPreset = MEMBER_PRESET_ID
     }
   }
   rows.push(bridgeRow('mimo', deps && deps.bridgeName))
