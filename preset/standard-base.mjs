@@ -70,8 +70,12 @@ export function standardPluginRows() {
       id: 'delegation', name: 'cordis:group', group: true,
       isolate: { workflowEngine: true },
       // 2026-10-18：移除 backgroundMode —— dsh-tool-subagent 0.2.1（当前 0.2.1-alpha.5）
-      // 已删除该字段，且 Config 不是 strict，写在这里会被**静默丢弃**：表面声明
-      // continuable/one-shot，实际由 subagent 运行时自行决定，属会骗人的死配置。
+      // 已删除该字段。机制经实装包双路径实测更正：未知/已删键会**通过 schema 校验并被
+      // 原样保留**（`Config['~standard'].validate({provider,backgroundMode})` 无 issues，
+      // 值幸存；schemastery 根本没有 strict 开关），只是**无人读取**该键
+      // （全 DSH 树对 backgroundMode 0 命中）⇒ 属「静默**忽略**」，不是「静默丢弃」。
+      // 危害：表面声明 continuable/one-shot 却毫无效果，且**运行时不报错**，
+      // 只能靠静态闸门（tests/keystone/persona-prompt-vars.test.mjs）拦。
       // 当前 schema 接受：provider / toolName / modelSelectionSettings /
       // agentOptions / agentPreset / allowedAgentPresets / maxDepth。
       config: [

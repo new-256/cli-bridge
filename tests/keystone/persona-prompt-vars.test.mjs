@@ -16,8 +16,10 @@
 //      （"…no longer supported; configure persona and tool plugins in an Agent Preset
 //        and select it with agentPreset (spawn only)"）⇒ 整个预设挂载失败；
 //      角色人格只能作为独立 Agent Preset，由委派行经 agentPreset 选择。
-//    - backgroundMode：已从 schema 删除，且 Config **不是 strict** ⇒ 被静默丢弃：
-//      声明 continuable/one-shot 却毫无效果，属会骗人的死配置。
+//    - backgroundMode：已从 schema 删除。机制经实装包双路径实测：未知/已删键会
+//      **通过校验并被原样保留**（`Config['~standard'].validate({provider,backgroundMode})`
+//      无 issues、值幸存；schemastery 无 strict 开关），只是**无人读取**该键
+//      ⇒ 属「静默**忽略**」而非「静默丢弃」。所以**运行时不报错**，静态闸门是唯一防线。
 //    当前 schema 接受：provider / toolName / modelSelectionSettings / agentOptions /
 //                      agentPreset / allowedAgentPresets / maxDepth。
 //
@@ -45,7 +47,7 @@ const PRESET_DIRS = {
 /** 成员预设目录（0.2.1 起角色人格只能作为独立预设存在；无生成物 yml）。 */
 const MEMBER_DIRS = ['mimo-member']
 
-/** dsh-tool-subagent 0.2.1 起已删除的配置字段（写进去要么被拒、要么被静默丢弃）。 */
+/** dsh-tool-subagent 0.2.1 起已删除的配置字段（写进去要么被显式拒绝、要么被静默忽略）。 */
 const REMOVED_TOOL_SUBAGENT_FIELDS = ['persona', 'toolFilter', 'backgroundMode']
 
 /** 抽取文本里全部 {{...}} 变量名。 */
@@ -117,7 +119,7 @@ for (const dir of [...Object.values(PRESET_DIRS), ...MEMBER_DIRS]) {
       for (const field of REMOVED_TOOL_SUBAGENT_FIELDS) {
         assert.ok(
           !Object.hasOwn(row.config || {}, field),
-          `tool-subagent 行 '${row.id}' 仍带已删除字段 ${field} —— 会被拒绝或静默丢弃，必须删掉`,
+          `tool-subagent 行 '${row.id}' 仍带已删除字段 ${field} —— 会被显式拒绝或静默忽略（运行时不报错），必须删掉`,
         )
       }
     }

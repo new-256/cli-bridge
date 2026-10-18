@@ -320,7 +320,8 @@ npm whoami          # 应输出 luchenglong
 - **预设契约随 DSH 版本漂移**（2026-10-18）：预设从**旧版上游模板**转录，继承了上游已删除的写法 →
   ① persona `suffix` 里的 `{{cwd}}` 不再是注册变量（DSH 只注册 `provider`/`model`），
   组装期直接 throw，**整个预设不可用**；② `dsh-tool-subagent` 0.2.1 起 `persona`/`toolFilter`
-  在 `apply()` 里显式 throw、`backgroundMode` 被静默丢弃（schema 非 strict）。
+  在 `apply()` 里显式 throw、`backgroundMode` 被静默**忽略**（注意：不是"被 schema 丢弃" ——
+  实测实装 schema 会**放行并保留**该键，只是无人读取；所以运行时不报错，只能靠静态闸门拦）。
   已修 + 立三层闸门（`tests/keystone/persona-prompt-vars.test.mjs`）。
   **完整方案与取证：`docs/audits/2026-10-18-preset-0.2.1-contract-fix.md`**（索引 `docs/audits/README.md`）。
   教训：上游预设模板是**会过期**的参考物，升级 DSH 后必须重新对照已实装包的
