@@ -154,9 +154,15 @@ export default function defineProvider(deps = {}) {
       if (resume) argv.push('-c', 'sandbox_mode="' + sandbox + '"')
       else argv.push('-s', sandbox)
 
-      const approval = (settings && settings.approvalPolicy && APPROVAL_POLICIES.indexOf(String(settings.approvalPolicy)) >= 0)
+      // 审批策略：非交互（-p/exec 无 TTY）场景**必须**显式给 never，否则 codex 会按自身
+      // 配置（或内置默认 on-request）请求批准 —— 没人能点，进程一路挂到超时。
+      // 此前这里默认留空、完全依赖用户 ~/.codex/config.toml（本机恰好写了 never 才没炸），
+      // 属于隐式依赖：换台机器或用户改配置就会静默变成"每次都等批准"。
+      // 现规则：用户显式配了就用；没配则 accept-edits/bypass 语义下强制 never。
+      const configuredApproval = (settings && settings.approvalPolicy && APPROVAL_POLICIES.indexOf(String(settings.approvalPolicy)) >= 0)
         ? String(settings.approvalPolicy)
         : ''
+      const approval = configuredApproval || (mode === 'plan' ? '' : 'never')
       // exec 没有 -a/--ask-for-approval；等价效果只能经 -c 覆盖（TOML 字符串值）。
       if (approval) argv.push('-c', 'approval_policy="' + approval + '"')
 

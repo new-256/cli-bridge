@@ -65,9 +65,11 @@ test('单后端归一：任何取值都是 null', () => {
 })
 
 // ── buildArgv（实测 flag 集）─────────────────────────────────────────────────
-test('buildArgv 基础形态：exec --json --skip-git-repo-check -s … <prompt>', () => {
+test('buildArgv 基础形态：exec --json --skip-git-repo-check -s … -c approval_policy <prompt>', () => {
   const b = provider.buildArgv('codex', { prompt: 'do it' }, { planActive: false })
-  assert.deepEqual(b.argv, ['codex', 'exec', '--json', '--skip-git-repo-check', '-s', 'workspace-write', 'do it'])
+  // 非交互（exec 无 TTY）必须显式给 approval_policy="never"，否则 codex 会等一个
+  // 没人能点的批准，一直挂到超时。此前默认留空、靠用户 config.toml，属隐式依赖。
+  assert.deepEqual(b.argv, ['codex', 'exec', '--json', '--skip-git-repo-check', '-s', 'workspace-write', '-c', 'approval_policy="never"', 'do it'])
   assert.equal(b.mode, 'accept-edits')
   assert.equal(b.timeoutSec, 900)
 })
@@ -157,8 +159,11 @@ test('buildArgv：审批策略与 reasoningEffort 走 -c（TOML 字符串）', (
   // 非法取值不进 argv（不做静默近似）。
   const bad = p.buildArgv(['codex'], { prompt: 'x', reasoningEffort: 'ultra' }, {})
   assert.ok(!bad.argv.some((x) => String(x).indexOf('model_reasoning_effort') >= 0))
+  // 没配置审批策略时**必须**兜到 never（非交互无人可点批准）；plan 态才留空。
   const noSetting = defineProvider({ env: {} }).buildArgv(['codex'], { prompt: 'x' }, {})
-  assert.ok(!noSetting.argv.some((x) => String(x).indexOf('approval_policy') >= 0))
+  assert.ok(noSetting.argv.includes('approval_policy="never"'), '非交互默认必须免批准')
+  const planMode = defineProvider({ env: {} }).buildArgv(['codex'], { prompt: 'x', mode: 'plan' }, {})
+  assert.ok(!planMode.argv.some((x) => String(x).indexOf('approval_policy') >= 0), 'plan 态不注入')
 })
 
 test('buildArgv：images 落地为 -i（exec 与 resume 都支持）', () => {

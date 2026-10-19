@@ -9,6 +9,35 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 > - CodeBuddy 线：[docs/history/codebuddy/CHANGELOG.md](docs/history/codebuddy/CHANGELOG.md)（终版 1.6.2）
 > - MiMo 线：[docs/history/mimo/CHANGELOG.md](docs/history/mimo/CHANGELOG.md)（终版 1.2.9）
 
+## [0.2.12] - 2026-10-20
+
+> 起因是用户问「现在所有 CLI 都是默认无需用户点确认的模式吗」。核对后发现 **codex 不是** ——
+> 它此前完全依赖用户自己的 `~/.codex/config.toml`。
+
+### Fixed
+- **codex 在非交互场景可能等一个没人能点的批准，一路挂到超时**。`codex exec` 没有 TTY，
+  此前 provider 的 `approvalPolicy` 默认留空 → 不传 `-c approval_policy` → 完全由用户的
+  `~/.codex/config.toml` 决定。本机因为恰好写了 `approval_policy = "never"`（实测 stderr 报
+  `approval: never`）才没炸；换台机器或用户改配置就会静默变成"每次都等批准"。
+  现在：用户显式配了就用；没配则在 accept-edits/bypass 语义下**强制**
+  `-c approval_policy="never"`（plan 态不注入，保留人工确认的语义）。
+  四家免批准方式现已一致且显式：
+  agy `--dangerously-skip-permissions --mode accept-edits` / claude
+  `--dangerously-skip-permissions` / codex `-c approval_policy="never"` / opencode `--auto`。
+
+### Added（验收工具，不参与 `node --test`）
+- `tests/e2e/cli-connectivity.mjs`：逐家真实跑**两轮**，第一轮要求记住暗号、第二轮续聊同一
+  会话问暗号。只有暗号回来才算"持续沟通正常"——**只看有没有回 sessionId 是不够的**。
+  四家实测全通过（agy `--conversation` / claude `--resume` / codex `exec resume` /
+  opencode `--session`）。顺带修了脚本里 `opencode` 直接写裸名导致的 ENOENT（真名
+  `opencode-cli.exe`，装在 `ai.opencode.desktop\cli\<ver>\`、不在 PATH）。
+- `tests/e2e/lamp-live-check.mjs`：用 preset 形态 + 模拟宿主 ctx 真跑一次任务，捕获
+  `<id>/status` 事件，验证「灯会亮」。四家均实测 `running → ok`。
+  过程中踩到一个**桩自身的坑**（值得记下）：模拟宿主 `subprocess.spawn` 时必须遵守
+  `spec.stdio.stdin === 'ignore'`。桩里不管 stdio 时 stdin 是一直开着的 pipe，CLI 会等 stdin，
+  最终被打超时杀死 → `exitCode=null` → 明明答对了却被判 `CLI_ERROR`。
+  对照实验：`stdin=ignore` → exit 0/SUCCESS；`stdin=pipe 不关` → exit null/CLI_ERROR。
+
 ## [0.2.11] - 2026-10-20
 
 > 用户反馈：「claude 我是用 cc-switch 改的配置，你现在获取的模型不对」。查证后不是列表写错，
