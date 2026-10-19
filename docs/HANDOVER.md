@@ -2,30 +2,32 @@
 
 > 面向接手这个仓库/这台机器的下一个人（或下一个 Agent）。
 > 目标：**不读完所有历史也能安全改动、发布、排障**。历史事故与红线集中在 §5 与 §10。
-> 最近一次更新：2026-10-16（0.2.4：**第四个 provider OpenCode** 接入 + 状态灯淡出修复 +
-> 版本单一来源；运行时改为 **npm registry 标准安装**，不再依赖本地开发目录）。
+> 最近一次更新：2026-10-20（**0.2.9：第五、第六个 provider `claude` + `codex` 接入**；
+> 同时把重复三处的 `PRESET_DIRS` 收敛为单一来源、把 codebuddy 的"模型清单必须实时"
+> 纪律推广到两家新 provider）。此前 0.2.4 的 OpenCode 记录见 §13。
 
 ---
 
 ## 1. 这是什么
 
-`@luchenglong/cli-bridge` 把**本机四个编码 CLI**（agy / CodeBuddy / MiMo / **OpenCode**）以同一套
-provider 描述符接入 DSH，并有四种落地形态（preset / 动态宿主 / 家级宿主插件+指示灯 / MCP stdio server）。
+`@luchenglong/cli-bridge` 把**本机六个编码 CLI**（agy / CodeBuddy / MiMo / OpenCode /
+**Claude Code** / **OpenAI Codex**）以同一套 provider 描述符接入 DSH，并有四种落地形态
+（preset / 动态宿主 / 家级宿主插件+指示灯 / MCP stdio server）。
 它由三个旧包（`agy-first-bridge` / `codebuddy-first-bridge` / `mimo-first-bridge`）合并而来，
-旧包的工具名、预设 id、策略文案**逐字保留**（兼容承诺，见 §5）。OpenCode 是统一包首个**新增**
-provider（无旧包可迁，无兼容包袱），见 §13。
+旧包的工具名、预设 id、策略文案**逐字保留**（兼容承诺，见 §5）。`opencode` / `claude` / `codex`
+是统一包**新增**的 provider（无旧包可迁，无兼容包袱），见 §13 与 §14。
 
 ## 2. 当前状态快照
 
 | 项 | 值 |
 | --- | --- |
-| 版本 | **0.2.4**（三处版本锁：`package.json` / `mcp/cli-bridge-mcp.mjs` 的 `SERVER_VERSION` / `CHANGELOG.md` 顶部；`verify.mjs` 机器比对） |
-| npm | `@luchenglong/cli-bridge@0.2.4`（`latest`；shasum `08ca3325376e96abc935435784106fd1ee158ba4`，68 files / 376.0 kB） |
-| GitHub | `new-256/cli-bridge`，`main` @ `acf6f09`；tag `v0.2.1` / `v0.2.2` / `v0.2.3` / `v0.2.4` |
+| 版本 | **0.2.9**（三处版本锁：`package.json` / `mcp/cli-bridge-mcp.mjs` 的 `SERVER_VERSION` / `CHANGELOG.md` 顶部；`verify.mjs` 机器比对） |
+| npm | `@luchenglong/cli-bridge@0.2.9`（`latest`；shasum `73d55ed7ca5e157a94f35cd86a109001891eceba`，98 files） |
+| GitHub | `new-256/cli-bridge`，`main` @ `31f8375`；tag `v0.2.1` … `v0.2.9` |
 | 旧包 | 三个都已在 npm 标 **deprecated**（提示迁移到统一包）：`agy-first-bridge@1.7.1`、`codebuddy-first-bridge@1.6.2`、`mimo-first-bridge@1.2.9` |
 | 旧仓 | `new-256/agy-first-bridge`、`new-256/mimo-first-bridge`：README 顶部已加迁移横幅且 **archived（只读）**；`codebuddy-first-bridge` 在 GitHub 上不存在 |
-| 测试 | **327 pass / 0 fail**（33 个 `*.test.mjs`），四闸门 `npm run check` 全绿 |
-| 本机运行时 | DSH Desktop；`dsh-home/profiles/web` 以 **npm registry 标准依赖** `@luchenglong/cli-bridge: "0.2.4"` + pnpm 快照部署（2026-10-15 起不再用 `file:`） |
+| 测试 | **569 tests / 568 pass / 0 fail / 1 skip**（既有跳过），四闸门 `npm run check` 全绿 |
+| 本机运行时 | DSH Desktop；`dsh-home/profiles/web` 以 **npm registry 标准依赖** + pnpm 快照部署（不用 `file:`）。⚠ 0.2.9 已发布但**运行时仍可能是旧版**，切版本要用户自己做 |
 
 **已知遗留 / 未处理项**（均有意为之，非故障）：
 - 家级补丁 `dsh-home\cordis.patch.yml` 里四条 MCP 行**仍是注释状态** —— 与旧版本交接文档
@@ -375,11 +377,60 @@ npm whoami          # 应输出 luchenglong
 
 ---
 
+## 14. Claude Code / OpenAI Codex provider（0.2.9 新增）
+
+两家都是**在真机上探测**后实现的，不要凭直觉改 argv —— 有一条错就会被 CLI 直接拒（`unexpected argument`）。
+完整实测事实见 `PROVIDER-CONTRACT.md` §10，这里只记要点与坑。
+
+### 文件与命名
+- `providers/claude.mjs`(508) + `claude-exe.mjs`(112) / `claude-models.mjs`(334) / `claude-policy.mjs`(37)
+- `providers/codex.mjs`(544) + `codex-cli.mjs`(471) / `codex-models.mjs`(107)
+- preset `preset/{claude,codex}-first/`；dynamic `dynamic/{claude,codex}.host.template.mjs`；MCP `mcp/providers/{claude,codex}.mjs`
+- 工具：`claude_run/_continue/_status/_models`、`codex_run/_continue/_status/_models`
+
+### 关键差异（与 agy/codebuddy/mimo/opencode 比）
+| 维度 | claude | codex |
+| --- | --- | --- |
+| 非交互 | `-p --output-format stream-json --verbose` | `exec --json` |
+| sessionId | `result.session_id` | `thread.started.thread_id` |
+| 续聊 | `--resume <id>` / `-c` | `exec resume <id>` / `--last` |
+| 成功判定 | **`is_error===false && exit===0`**（subtype 不可靠！） | exit 0 + `turn.completed` + 无顶层 error |
+| 模型清单 | 无效模型触发 400 报文 | `GET {base_url}/models`（live） |
+
+### 三个必须知道的坑
+1. **claude 的成功判定不能看 subtype**：无效模型时 `is_error=true` 但 `subtype` 仍是 `"success"`、
+   退出码可能是 0 也可能是 1。只看 subtype 或只看 exit code 都会把失败当成功。
+2. **`codex exec` 不吃根命令的旗**：`-a/--ask-for-approval` 只属于 `codex`，`codex exec` 会报
+   unexpected argument；审批走 `-c approval_policy="…"`。同理 `exec resume` 没有 `-C/-s/-o/--add-dir`。
+3. **`item.completed` 的 `item.type==="error"` 是告警不是致命错**（`resume --last` 会带一条
+   「此模型与原会话不同」）。把它当致命错会让正常续聊全判失败。
+
+### 配置/凭据（本机实际布局，都不是官方直连）
+- claude 走了 **DeepSeek 的 Anthropic 兼容端点**：`~/.claude/settings.json` 的 env 块里
+  `ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic` + `ANTHROPIC_AUTH_TOKEN` +
+  `ANTHROPIC_DEFAULT_*_MODEL=deepseek-v4-pro[1M]`。所以实测可用模型是 `deepseek-flash,
+  deepseek-v4-pro`，**不是** Claude 官方模型名。
+- codex 走了 **OpenRouter**：`~/.codex/config.toml` 里 `model_provider="custom"`、
+  `base_url=https://openrouter.ai/api/v1`、`experimental_bearer_token`。实时 `/models` 返回 469 项。
+- 因此两家的"可用模型"完全取决于用户配的端点，**不能硬编码模型名**；只能实时问端点。
+
+### 手动验收脚本（会真联网/真花钱，故不进 `node --test`）
+```
+node tests/e2e/lead-live-smoke.mjs     # 走描述符的 buildArgv→真 CLI→parseJson→buildResult 全链路
+node tests/codex/helpers/live-cli-smoke.mjs
+node tests/claude/helpers/verify-real-cli.mjs
+```
+
+---
+
 ### 交接最小检查单
 
-- [ ] `npm run check` 全绿（327 测试）
+- [ ] `npm run check` 全绿（569 测试）
 - [ ] `node mcp/cli-bridge-mcp.mjs --check` 显示 `scheduling.source` 且版本与 package.json 一致
-- [ ] `GET $env:DSH_WEB_URL/cli-bridge/status` 返回**四家** + `scheduling`
-- [ ] 设置面板有 `总设置 | AGY | CB | MIMO | OPENCODE` 五个标签；OpenCode 卡能选模型并保存落盘
+- [ ] `GET $env:DSH_WEB_URL/cli-bridge/status` 返回**六家** + `scheduling`
+- [ ] 设置面板有 `总设置 | AGY | CB | MIMO | OPENCODE | CLAUDE | CODEX` 七类卡片；
+      各卡片的「默认模型」下拉显示的是**实时**清单（空的话说明该家没登录，见 §10）
 - [ ] 起一个 opencode 任务：灯亮 → 完成后 **60 秒内灭**（§6.1）
-- [ ] 知道红线在 §5、生效时机在 §7.2、排障在 §10、OpenCode 在 §13
+- [ ] 知道红线在 §5、生效时机在 §7.2、排障在 §10、OpenCode 在 §13、claude/codex 在 §14
+- [ ] **`PRESET_DIRS` 只在 `providers/registry.mjs` 一处** —— 加 provider 别再在
+      `build.mjs` / `preset-declarations.mjs` / `verify.mjs` 里各写一份（0.2.9 收敛的坑）
