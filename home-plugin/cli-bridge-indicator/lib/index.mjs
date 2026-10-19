@@ -39,8 +39,13 @@ export const PROJECT_TTL_MS = 10 * 60 * 1000
  * 想看到灯灭」来说太长：任务结束后灯要挂满 10 分钟才消失，用户感知是「灯不灭」。
  * 区分两态：运行中（含短暂间隔）保持长 TTL 防抖；已收口的项目走短 TTL 快速淡出。
  * 淡出只影响 pill 渲染（stale 项目仍在弹窗里作历史），不丢数据。
+ *
+ * 用户要求（0.2.13）：常规会话里「任务跑完后 10 秒内消失」，故取 10s。
+ * 注意这**不影响专用模式（preset 会话）的常驻灯** —— 那条路径走客户端 readyShow
+ * （iAm===true），与这里的 stale 标记无关：活动期显示活动灯，10s 后自然回落成
+ * 常驻的「就绪」灯。
  */
-export const PROJECT_DONE_TTL_MS = 60 * 1000
+export const PROJECT_DONE_TTL_MS = 10 * 1000
 export const MAX_PROJECTS = 24
 export const MAX_SESSIONS = 64
 

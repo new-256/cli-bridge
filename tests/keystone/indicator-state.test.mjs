@@ -172,11 +172,17 @@ test('doneTtlMs 缺省跟随显式传入的 projectTtlMs（传短 TTL 必须真�
   assert.equal(b.state, 'idle')
 })
 
-test('生产默认值：已完成 TTL 短于运行中 TTL', async () => {
+test('生产默认值：已完成 TTL = 10s（用户要求「跑完后 10 秒内消失」）', async () => {
   const mod = await import('../../home-plugin/cli-bridge-indicator/lib/index.mjs')
   assert.ok(mod.PROJECT_DONE_TTL_MS < mod.PROJECT_TTL_MS, 'done TTL must be shorter than in-flight TTL')
-  // 60s 级：足够看到「刚跑完」的结果，又不至于让灯挂满 10 分钟。
-  assert.ok(mod.PROJECT_DONE_TTL_MS >= 30 * 1000 && mod.PROJECT_DONE_TTL_MS <= 2 * 60 * 1000)
+  // 用户明确要求：常规会话里任务跑完，灯 10 秒内消失。钉死这个值，防止被改回去
+  // （改大就又变成「灯不灭」，改小则刚跑完就闪没，用户来不及看到结果）。
+  assert.equal(mod.PROJECT_DONE_TTL_MS, 10 * 1000)
+  // 运行中仍走 10 分钟防抖：短暂停顿不该让灯闪。
+  assert.equal(mod.PROJECT_TTL_MS, 10 * 60 * 1000)
+  // 第二层 stale 过滤（MCP 上报规范化）不得比它更早切掉数据，否则 10s 无从体现。
+  const kit = await import('../../core/bridge-kit.mjs')
+  assert.ok(kit.MCP_BRIDGE_STALE_MS > mod.PROJECT_DONE_TTL_MS, 'MCP stale 窗口必须宽于完成态 TTL')
 })
 
 test('淡出只影响聚合/渲染，项目仍在列表里（弹窗历史不丢）', () => {

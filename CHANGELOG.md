@@ -9,6 +9,35 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 > - CodeBuddy 线：[docs/history/codebuddy/CHANGELOG.md](docs/history/codebuddy/CHANGELOG.md)（终版 1.6.2）
 > - MiMo 线：[docs/history/mimo/CHANGELOG.md](docs/history/mimo/CHANGELOG.md)（终版 1.2.9）
 
+## [0.2.13] - 2026-10-20
+
+> 用户反馈「通道可能通了，但是我没有看到状态灯」。查证后：**灯没坏，是显示条件没被满足**
+> —— 常规会话里没有活动就不出现（这是 0.2.1 修「灯永久挂着」时定的），而按用户要求
+> 「跑完后 10 秒内消失」之前的窗口是 **60 秒**。
+
+### Changed
+- **完成态指示灯淡出窗口 60s → 10s**（`PROJECT_DONE_TTL_MS`）。用户明确要求：常规会话里
+  不调用就不出现、调用时亮、**跑完 10 秒内消失**。运行中仍走 10 分钟防抖（短暂停顿不该让灯闪）。
+  已完成项目只在 pill 行淡出，弹窗里仍保留作历史，不丢数据。
+- **专用模式（preset 会话）的常驻灯不受影响**：那条路径走客户端 `readyShow`（`iAm === true`），
+  与 stale 标记无关。活动期间显示活动灯，10s 后自然回落到常驻的「就绪」灯。
+
+### 排查结论（供后来者，避免重复怀疑是 bug）
+- 家级只暴露 `/cli-bridge/status` 等**只读**路由，没有可以从外部注入活动的入口；灯的数据
+  必须由宿主真实执行时上报。
+- 两条上报路径：preset/dynamic 形态走 `ctx.emit('<id>/status')` /
+  `cliBridgeCollector.mergeSnapshot`；**MCP 形态**原子写
+  `{dsh-home}/cli-bridge-mcp-<id>.json`，家级在响应 status 时读盘合并。
+- 灯是否渲染：`fresh`（未 stale 的项目）**或** `readyShow`（当前会话就属于该 provider 的
+  preset）二者之一非空。两者都空 → 整行不渲染。所以「普通会话 + 无近期活动」下看不到灯
+  是设计而非故障。
+
+### Added
+- `tests/e2e/mcp-lamp-e2e.mjs`：跑**真实 stdio MCP 协议**（initialize → tools/list →
+  tools/call），验证 `cli-bridge-mcp-<id>.json` 被写入。传 `CLB_MCP_HOME` 可指向真实
+  dsh-home，实测 MCP 调用后 `status` 立即出现 `state=ok / stale=false / age=0s`，
+  证明「常规会话调用 → 灯亮」这条链路成立。
+
 ## [0.2.12] - 2026-10-20
 
 > 起因是用户问「现在所有 CLI 都是默认无需用户点确认的模式吗」。核对后发现 **codex 不是** ——

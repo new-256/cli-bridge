@@ -252,9 +252,12 @@ window.__ModuleLoader__.load({
         return function () { window.removeEventListener("keydown", h); };
       }, [open]);
       const pills = [];
-      // 陈旧过滤（0.2.1 修复「指示灯长期存在」）：stale 项目（>10min 无活动且未运行）不再
-      // 渲染成常亮灯。历史事故：一次失败后 ✗ AGY 灯永久挂在那 —— 弹窗里仍列 stale 项目作
-      // 历史，但 pill 行只认新鲜活动。
+      // 陈旧过滤（0.2.1 修复「指示灯长期存在」）：stale 项目不再渲染成常亮灯。
+      // 历史事故：一次失败后 ✗ AGY 灯永久挂在那 —— 弹窗里仍列 stale 项目作历史，
+      // 但 pill 行只认新鲜活动。stale 由服务端按两态 TTL 标记（运行中 10min 防抖 /
+      // 已收口 10s 淡出，见 index.mjs 的 PROJECT_DONE_TTL_MS）。
+      // 常规会话：不调用就不出现，调用时亮，跑完 10s 内消失；
+      // 专用模式（preset 会话）：活动灯淡出后回落到下面 readyShow 的常驻「就绪」灯。
       for (const meta of metas) {
         const b = (s && s.providers && s.providers[meta.id]) || null;
         if (!b) continue;
