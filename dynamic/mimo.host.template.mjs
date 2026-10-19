@@ -2,6 +2,7 @@
 //
 // 构建（node scripts/build.mjs --only=mimo）把 core/bridge-kit.mjs 与
 // providers/mimo.mjs 分别内联进下方两个占位标记行（各占一行、行内仅此标记），
+// 第三个占位标记行负责内联 providers/mimo-*.mjs 片文件（纯解析/结果构造），
 // 生成 dynamic/mimo.host.js。注意：标记字面量绝不能出现在本注释里 —— 构建做全局
 // 替换，注释中出现同样也会被替换成正文代码而炸掉语法。
 // 沙箱纪律（旧仓 dynamic/host.js 头注 verbatim 精神）：
@@ -17,6 +18,7 @@
 //    MIMO_BIN/MIMO_CLI env > 已知安装位置 > subprocess.resolveExecutable(PATH)。
 /*__KIT__*/
 /*__PROVIDER__*/
+/*__EXTRA__*/
 /*__SCHED__*/
 
 return {

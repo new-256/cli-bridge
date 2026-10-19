@@ -14,8 +14,8 @@ import { join } from 'node:path'
 import {
   codexParseToml, codexReadConfig, codexModelsEndpoint, codexExeCandidates, codexResolveExePrefix,
   codexHomeDir, codexNormalizeModelItem, codexParseModelsPayload,
-  codexCatalogModels, codexBuiltinModels, codexLiveModels, codexLiveModelsSync,
-  codexModelOptions, codexCachedLiveModels
+  codexCatalogModels, codexBuiltinModels, codexLiveModels,
+  codexCachedModelOptions, codexCachedLiveModels
 } from '../../providers/codex-cli.mjs'
 import { codexModelsTool } from '../../providers/codex-models.mjs'
 import { materializeCodexHome } from './helpers/fixture-home.mjs'
@@ -264,40 +264,48 @@ test('codexLiveModels：无 base_url → 直接失败（不发请求）', async 
   assert.match(res.error, /base_url/)
 })
 
-test('codexLiveModelsSync：端点拒绝连接时 ok:false 且不抛（面板路径不许炸）', () => {
-  const env = fixtureEnv({ CODEX_BRIDGE_MODELS_URL: 'http://127.0.0.1:9/sync/models' })
-  const res = codexLiveModelsSync(env, { timeoutMs: 4000 })
+test('codexLiveModels：端点卡住时按时中止（面板点「拉取」不会一直转圈）', async () => {
+  const env = fixtureEnv({ CODEX_BRIDGE_MODELS_URL: 'https://slow.test/stuck/models' })
+  const stuck = (url, init) => new Promise((resolve, reject) => {
+    if (init && init.signal) init.signal.addEventListener('abort', () => reject(new Error('aborted by timeout')))
+  })
+  const t0 = Date.now()
+  const res = await codexLiveModels(env, { fetch: stuck, timeoutMs: 2000 })
   assert.equal(res.ok, false)
   assert.equal(res.source, 'live')
-  assert.ok(String(res.error).length > 0)
+  assert.match(res.error, /timeout 2000ms/)
+  assert.ok(Date.now() - t0 < 15000, 'abort must fire near the requested timeout')
 })
 
-// ── 面板候选池（同步回调）──────────────────────────────────────────────────
-test('codexModelOptions：实时缓存命中 → [实时] 标签 + 说明', async () => {
-  const env = fixtureEnv({ CODEX_BRIDGE_MODELS_URL: 'https://options.test/cached/models' })
-  await codexLiveModels(env, { fetch: fakeFetch({ status: 200, body: LIVE_PAYLOAD }) })
-  const opts = codexModelOptions(env)
-  assert.equal(opts.source, 'live')
-  assert.equal(opts.options.length, 3)
-  assert.ok(opts.options.every((o) => o.label.indexOf('[实时]') >= 0))
-  assert.match(opts.note, /实时清单来自/)
-})
-
-test('codexModelOptions：实时不可用 → 降级到本地目录但明确标注（不冒充实时）', () => {
-  // base_url 指向本机关闭端口：同步探测快速 ECONNREFUSED。
-  const env = fixtureEnv({ CODEX_BRIDGE_MODELS_URL: 'http://127.0.0.1:9/options/models' })
-  const opts = codexModelOptions(env, { timeoutMs: 4000 })
-  assert.equal(opts.source, 'catalog')
-  assert.equal(opts.options.length, 2)
-  assert.ok(opts.options.every((o) => o.label.indexOf('[本地目录]') >= 0))
-  assert.match(opts.note, /不是服务端权威清单/)
-})
-
-test('codexModelOptions：三层全不可用 → 空候选 + 明确说明（面板仍可手输）', () => {
-  const opts = codexModelOptions({ CODEX_HOME: 'C:/nope' })
+// ── 面板候选池（契约 §3.2：纯读缓存，绝不探测）────────────────────────────────
+test('codexCachedModelOptions：未拉取 → 空候选 + 「点按钮拉取」说明（不做任何探测）', () => {
+  const env = fixtureEnv({ CODEX_BRIDGE_MODELS_URL: 'http://127.0.0.1:9/cache-none/models' })
+  const opts = codexCachedModelOptions(env)
   assert.deepEqual(opts.options, [])
   assert.equal(opts.source, 'none')
-  assert.match(opts.note, /未能读取任何模型清单/)
+  assert.match(opts.note, /拉取可用模型/)
+  assert.match(opts.note, /还没拉取过/)
+})
+
+test('codexCachedModelOptions：live 拉取成功后命中缓存 → 候选带 [free] 标注与来源说明', async () => {
+  const env = fixtureEnv({ CODEX_BRIDGE_MODELS_URL: 'https://cache.test/hit/models' })
+  await codexLiveModels(env, { fetch: fakeFetch({ status: 200, body: LIVE_PAYLOAD }) })
+  const opts = codexCachedModelOptions(env)
+  assert.equal(opts.source, 'live')
+  assert.equal(opts.count, 3)
+  assert.deepEqual(opts.options.map((o) => o.value), ['fixture/free-model:free', 'fixture/paid-model', 'fixture/zero-priced'])
+  assert.match(opts.options[0].label, /\[free\]/)
+  assert.equal(opts.options[1].label, 'fixture/paid-model')
+  assert.match(opts.note, /上次拉取到 3 个模型/)
+})
+
+test('codexCachedModelOptions：本地目录/内置定义再齐全也不许填进面板下拉（非权威≠实时）', () => {
+  // 前提：该 fixture CODEX_HOME 的 catalog 与 builtin 都可读。
+  const env = fixtureEnv({ CODEX_BRIDGE_MODELS_URL: 'https://cache.test/miss/models' })
+  assert.equal(codexCatalogModels(env).ok, true)
+  assert.equal(codexBuiltinModels(env).ok, true)
+  // 但 live 缓存为空 ⇒ 面板下拉必须是空的（宁可空着，也不展示可能过时的本地目录）。
+  assert.deepEqual(codexCachedModelOptions(env).options, [])
 })
 
 // ── codex_models 工具（三形态共用逻辑）──────────────────────────────────────

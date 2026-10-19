@@ -570,27 +570,23 @@ function createRunner(o) {
 
 // providers/codebuddy.mjs — codebuddy provider descriptor。
 //
-// 移植基线：codebuddy-first-bridge v1.6.x 的纯逻辑与 preset/codebuddy-first 内联语义，
-// 逐字保持（契约 §8：工具入参语义与 schema 不许漂移）。provider 无关骨架在 bridge-kit。
-// 纯逻辑片：codebuddy-catalog.mjs（模型目录/凭据/探测）、codebuddy-schemas.mjs（三 schema）、
-// codebuddy-models-tool.mjs（codebuddy_models 工具）。build 会把 codebuddy-*.mjs 全部
-// 内联进沙箱同一作用域。
+// 移植基线：codebuddy-first-bridge v1.6.x 的纯逻辑与 preset 内联语义，逐字保持（契约 §8： // 工具入参语义与 schema 不许漂移）。provider 无关骨架在 bridge-kit。纯逻辑片：
+// codebuddy-catalog.mjs（模型目录/凭据）、codebuddy-models-source.mjs（探测+缓存）、
+// codebuddy-models-tool.mjs（codebuddy_models）、codebuddy-consts.mjs（POLICY_TEXT/后端表）、
+// codebuddy-schemas.mjs（三 schema）。
 //
-// 红线：本文件会被内联进 dynamic 沙箱 —— 绝不出现元环境字面量；process/env/fs 只经
-// deps 注入或 typeof 守卫读取；宿主能力全部走 attach(hostOpts)。isLimited 用本文件
-// 自定义的中文限流表（旧 core verbatim），不用 kit 通用表。// import { createStatusEngine, createRunner, clampInt } from '../core/bridge-kit.mjs'
-// ── 提示词策略段（旧 preset POLICY_TEXT verbatim；systemPrompt order 5）────────
-// （LIMIT_RE 在 kit L33 已有，故此处带 CODEBUDDY_ 前缀）。
-// codebuddy-en 凭据的第三条通道：DSH 凭据库里可能已有的 workbuddy key（旧 core verbatim）。
-
-// 离线/读不到描述文件时的回退静态表（真机按账号实测快照，2026-09）。
-// 模型目录相关常量与纯逻辑已拆到 ./codebuddy-catalog.mjs —— 主文件原 864 行远超
-// 600 行红线（规则 §26）。
-//   • ESM 形态（preset / MCP / 测试）：直接 import。
-//   • dynamic 沙箱形态：scripts/build.mjs 把该文件内联进同一作用域（模板顶部的
-//     第三个占位标记），import 行被 stripModuleSyntax 剥掉，同名标识符天然可见。
-//     ⚠️ 本注释里绝不写出那个标记的字面量：build 做全局文本替换，注释中出现同样
-//     会被替换成正文代码，把注释劈开 → 生成物语法崩。// import { BACKEND_MODEL_IDS, PRODUCT_DESCRIPTOR_ENV, CREDIT_ID_ALIASES, MODEL_DESCRIPTION, BACKEND_ENUM, accountConfigCandidates, productDescriptorCandidates, normalizeProductConfig, extractModelIds, parseCreditValue, formatCreditLabel, extractModelCredits, lookupModelCredits, backendModelCatalog, rememberAccountCatalog, getAccountCatalog, parseAccountModels, modelCatalogDetailed, formatModelCatalogText, cbCatalogSetHost, BACKEND_AUTH_IDS, CREDENTIAL_KEYS, readBackendAuthDomain, readDshWorkbuddyToken, resolveEnToken, fetchHelpModelsSync, cachedCliModels, currentPreferredBackend, parseHelpModels, probeAccountModelsSync, } from './codebuddy-catalog.mjs'// import { codebuddyModelsTool } from './codebuddy-models-tool.mjs'// import { POLICY_TEXT, CODEBUDDY_LIMIT_RE, BACKENDS, BACKEND_ENDPOINTS, AUTH_DOMAIN_ENDPOINTS, BACKEND_LABELS, BACKEND_ALIASES, DEFAULT_BACKEND, SETTINGS_KEYS } from './codebuddy-consts.mjs'// import { RUN_PARAMS, CONTINUE_PARAMS, STATUS_PARAMS } from './codebuddy-schemas.mjs'
+// 红线：本文件会被内联进 dynamic 沙箱 —— 绝不出现元环境字面量；process/env/fs 只经 deps
+// 注入或 typeof 守卫读取；宿主能力全部走 attach(hostOpts)。isLimited 用本文件自定义的中文
+// 限流表（旧 core verbatim），不用 kit 通用表。命名纪律：顶层名绝不与 bridge-kit 同名
+// （沙箱里同作用域），故限流表带 CODEBUDDY_ 前缀。
+// ⚠️ 各片在沙箱里被内联进**同一作用域**（build 做全局文本替换）：注释里绝不写占位标记的
+// 字面量，否则注释会被替换成正文代码而劈开，生成物语法崩。
+// import { createStatusEngine, createRunner, clampInt } from '../core/bridge-kit.mjs'// import { BACKEND_MODEL_IDS, PRODUCT_DESCRIPTOR_ENV, CREDIT_ID_ALIASES, MODEL_DESCRIPTION, BACKEND_ENUM, accountConfigCandidates, productDescriptorCandidates, normalizeProductConfig, extractModelIds, parseCreditValue, formatCreditLabel, extractModelCredits, lookupModelCredits, backendModelCatalog, rememberAccountCatalog, getAccountCatalog, parseAccountModels, modelCatalogDetailed, formatModelCatalogText, cbCatalogSetHost, BACKEND_AUTH_IDS, CREDENTIAL_KEYS, readBackendAuthDomain, readDshWorkbuddyToken, resolveEnToken } from './codebuddy-catalog.mjs'
+// 探测/缓存那一层单独一片（要走子进程，与纯解析内聚度低；见 codebuddy-models-source.mjs 头注）。
+// import { fetchHelpModelsSync, cachedCliModels, currentPreferredBackend, parseHelpModels, probeAccountModelsSync, rememberCliModels, probeAccountModels } from './codebuddy-models-source.mjs'
+// import { codebuddyModelsTool } from './codebuddy-models-tool.mjs'
+// import { POLICY_TEXT, CODEBUDDY_LIMIT_RE, BACKENDS, BACKEND_ENDPOINTS, AUTH_DOMAIN_ENDPOINTS, BACKEND_LABELS, BACKEND_ALIASES, DEFAULT_BACKEND, SETTINGS_KEYS } from './codebuddy-consts.mjs'
+// import { RUN_PARAMS, CONTINUE_PARAMS, STATUS_PARAMS } from './codebuddy-schemas.mjs'
 function defineProvider (deps = {}) {
   const env = deps.env || {}
   let host = null // attach 后保存 hostOpts（preset/dynamic/MCP 形态宿主能力）
@@ -977,15 +973,13 @@ function defineProvider (deps = {}) {
       }
     },
 
-    // codebuddy_models：实时列出本机 codebuddy 可用模型（账号探测优先，回落 CLI 名册）。
-    // 只在宿主有 spawn/fs 能力时注册（preset 注入 deps.process / MCP 注入 deps.nodeChild；
-    // dynamic 沙箱形态省略）。**失败必须 ok:false + 可操作错误**，绝不静默返回空列表或
-    // 伪造模型（工作手册红线 §7；对照 workbuddy-auth 的 catalog-store 静默降级 —— 不照抄）。
+    // codebuddy_models：只在宿主有 spawn/fs 能力时注册（preset 注 deps.process；MCP 注
+    // deps.nodeChild；dynamic 沙箱省略）。**失败必须 ok:false + 可操作错误**，绝不静默返回
+    // 空列表或伪造模型（红线 §7；对照 workbuddy-auth 的 catalog-store 静默降级 —— 不照抄）。
     extraTools: (deps.process || deps.nodeChild || deps.nodeFs) ? [codebuddyModelsTool({
       env, deps, BACKEND_ENUM, normalizeBackend, resolveBackend, modelCatalogDetailed, getAccountCatalog,
-      // faceEnv：让账号探测打到**请求的那个产品面**（与 buildArgv 完全同一套端点/凭据
-      // 注入规则）。缺了它，探测会走 CLI 自身默认登录面 —— 标着 codebuddy-en 实际却
-      // 问的是 codebuddy 面，得出的清单看着对其实是另一个面的（本轮修的就是这类偏差）。
+      // faceEnv：让账号探测打到**请求的那个产品面**（与 buildArgv 同一套端点/凭据注入）。
+      // 缺了它探测会走 CLI 自身默认登录面 —— 标着 codebuddy-en 却去问 codebuddy 面。
       faceEnv: (backend) => {
         try {
           const settings = (deps.settings && typeof deps.settings === 'object') ? deps.settings : {}
@@ -1004,36 +998,28 @@ function defineProvider (deps = {}) {
       defaults: () => normalizeSettings(null),
       normalize: (raw) => normalizeSettings(raw),
       meta() {
-        // defaultModel 下拉 = 账号级实时清单（服务端裁决）。走过的弯路留档：
-        //   ① 随包冻结的 product.ioa.json → 16 项、2 个 id 已改名（错）
-        //   ② CLI `--help` 的 "Currently supported:" → 18 项，但那是 CLI 构建期烙进去的，
-        //      实测同样滞后（含已废弃的 minimax-m3/kimi-k3-1，缺 glm-5.3-flashx 等）
-        //   ③ 现在：用无效模型探测让服务端回「该账号当前支持」的 19 项 —— 唯一权威源。
-        // 面板同步回调故用 spawnSync 探测并缓存 5 分钟；失败则下拉留空 + 明确提示，
-        // 绝不展示已知错误的 roster。面跟随 preferredBackend（旧实现硬编码 codebuddy 面）。
-        const face = (currentPreferredBackend() && normalizeBackend(currentPreferredBackend())) || DEFAULT_BACKEND
-        const faceEnv = (() => {
-          try {
-            const s = deps.settings || {}
-            const authDomain = readBackendAuthDomain(face, { env })
-            const tok = resolveEnToken(face === 'codebuddy-en' ? s.codebuddyEnToken : null, { env })
-            return endpointEnv(face, s.endpointOverride, authDomain, tok.token) || {}
-          } catch (e) { return {} }
-        })()
-        const live = cachedCliModels(face, () => probeAccountModelsSync(env, { envExtra: faceEnv, timeoutMs: 12000 }))
+        // defaultModel 下拉 = 缓存里的账号级清单。走过的弯路：静态表层（16 项、2 个 id 已改名）
+        // → CLI `--help` 名册（18 项但仍滞后、含已废 id）→ 无效模型探测让服务端回权威清单。
+        // 契约 §3.2 起 meta() **只读缓存、绝不 spawn**；探测由「拉取可用模型」触发 refreshModels。
+        // 面的取值必须与 refreshModels 同源（先宿主设置、再设置文件），否则会「刷新成功但下拉仍空」。
+        const face0 = (deps.settings && deps.settings.preferredBackend) || currentPreferredBackend()
+        const face = normalizeBackend(face0) || DEFAULT_BACKEND
+        const live = cachedCliModels(face)          // 只读：未命中返回 undefined
         let options = []
-        let note = ''
-        if (live && live.ok && live.ids.length) {
+        let note = '点下方「拉取可用模型」从服务端获取本账号的可用清单；当前面：' + face +
+          '。日常任务优先免费（x0.00）。'
+        if (live && live.ids && live.ids.length) {
           const detail = modelCatalogDetailed(face, { env, accountModels: live.ids })
           const byId = new Map(detail.map((x) => [x.id, x]))
           options = live.ids.map((id) => {
             const d = byId.get(id)
             return { value: id, label: (d && d.label) || id }
           })
-          note = '账号实时清单（' + live.ids.length + ' 项，服务端裁决）；当前面：' + face + '。日常任务优先免费（x0.00）。'
+          note = '上次拉取结果（' + live.ids.length + ' 项，服务端裁决）；当前面：' + face +
+            '。要更新请重新点「拉取可用模型」。'
         } else {
-          note = '未能读取该账号的模型清单（' + String((live && live.error) || 'unknown') +
-            '）。请确认该产品面已登录（在 codebuddy CLI 里完成登录），或手动输入模型 id。'
+          note = '尚未拉取（或该面未登录）。点「拉取可用模型」让服务端回吐本账号的清单；' +
+            '此前也可直接手输模型 id。当前面：' + face + '。'
         }
         return {
           titleSuffix: 'CodeBuddy',
@@ -1046,6 +1032,7 @@ function defineProvider (deps = {}) {
             {
               key: 'defaultModel', label: '默认模型', type: 'select', allowCustom: true, placeholder: '(CLI 默认)',
               options,
+              refresh: { label: '拉取可用模型' },
               note
             },
             { key: 'codebuddyEnToken', label: 'WorkBuddy 国际版 Token', type: 'secret', note: '仅 backend="codebuddy-en" 需要。国际版登录 token 被 protector key 封装不落盘，只能手工提供；留空则自动尝试 DSH 凭据库的 WORKBUDDY_TOKEN。' },
@@ -1066,6 +1053,44 @@ function defineProvider (deps = {}) {
           if (d.hint) lines.push('  ⚠ ' + d.hint)
         }
         return lines.join('\n')
+      },
+      /**
+       * 手动拉取（契约 §3.2）：唯一权威源 = 无效模型触发的服务端 400 报文（「Currently
+       * supported models for your account」）。成功后回填缓存，settingsView 再取 meta 即显示。
+       * 失败一律 ok:false + 可操作错误 —— 绝不返回 {ok:true, ids:[]}，也绝不把静态表/CLI
+       * 自报名册冒充成账号可用清单（0.2.6~0.2.7 反复踩过的坑）。
+       */
+      async refreshModels(settings, envOverride) {
+        const s = normalizeSettings(settings)
+        const face = normalizeBackend(s.preferredBackend) || DEFAULT_BACKEND
+        const e = envOverride || env
+        // 端点/凭据注入与 buildArgv 同一套规则（否则会拿 A 面凭据去问 B 面）。
+        let faceEnv = {}
+        try {
+          const authDomain = readBackendAuthDomain(face, { env: e })
+          const tok = resolveEnToken(face === 'codebuddy-en' ? s.codebuddyEnToken : null, { env: e })
+          faceEnv = endpointEnv(face, s.endpointOverride, authDomain, tok.token) || {}
+        } catch (err) { faceEnv = {} }
+        let probe
+        try {
+          probe = await probeAccountModels(e, { envExtra: faceEnv, timeoutMs: 90000 })
+        } catch (err) {
+          return { ok: false, ids: [], source: 'account-live', error: '探测进程异常：' + String((err && err.message) || err) }
+        }
+        if (!probe || !probe.ok || !probe.ids || !probe.ids.length) {
+          return {
+            ok: false, ids: [], source: 'account-live',
+            error: '未能从「' + face + '」面获取账号模型清单：' + String((probe && probe.error) || 'no roster') +
+              '。常见原因：该面未登录（先在 codebuddy CLI 里 /login）、token 缺失或端点不通；' +
+              '也可在「默认后端」里换个面再拉。'
+          }
+        }
+        rememberCliModels(face, probe.ids, 'account-live')
+        // 标签沿用目录展示名（没有就回落 id），与下拉其它项一致。
+        const detail = modelCatalogDetailed(face, { env: e, accountModels: probe.ids })
+        const labels = {}
+        for (const x of (Array.isArray(detail) ? detail : [])) if (x && x.label) labels[x.id] = x.label
+        return { ok: true, ids: probe.ids, labels, source: 'account-live' }
       }
     },
 
@@ -1152,6 +1177,7 @@ function defineProvider (deps = {}) {
 // 由 codebuddy.mjs 在 defineProvider 里调 cbCatalogSetHost() 注入；未注入时退到
 // getBuiltinModule 守卫（沙箱里没有 → 返回 null / 默认分隔符，绝不抛）。
 // 名字一律带 cbCatalog_ 前缀：内联后与主文件的 fsRead/pathJoin 同处一个作用域。
+// export 供 codebuddy-models-source.mjs 读取：ESM live binding，cbCatalogSetHost 后自动同步。
 let cbCatalogEnv = {}
 let cbCatalogFs = null
 let cbCatalogPathSep = "/"
@@ -1363,239 +1389,6 @@ const BACKEND_ENUM = ['codebuddy', 'codebuddy-intl', 'codebuddy-ioa', 'codebuddy
     return v && v.length ? v.slice() : null
   }
 
-  // ── 实时模型清单（CLI 是一手权威来源，对齐 workbuddy-auth 的「权威白名单」思路）──
-  //
-  // 为什么不再以静态表/磁盘描述文件为主：实测本机 codebuddy CLI --
-  //   • 账号实时清单（用无效模型触发 400 报文）= 19 项
-  //   • CLI `--help` 声明的 roster         = 19 项，与账号清单完全一致
-  //   • 我们原先读的 product.ioa.json 静态表 = 16 项，且 2 个 id 已过时
-  //     （minimax-m3 → minimax-m3-pay、kimi-k3-1 → kimi-k3-2），另缺 4 个新模型。
-  //   静态表是「随包冻结」的，必然落后于 CLI，故只保留作倍率元数据与最后兜底。
-  //
-  // 两级实时来源（都不静默冒充权威数据，各带 source 标签）：
-  //   A. account-live —— 起 CLI 用无效模型探测「该账号当前支持」的清单（需该面已登录，
-  //      一次网络往返；对照 workbuddy-auth 的 agents[cli].models 白名单语义）。
-  //   B. cli-help     —— 解析 `--help` 的 "Currently supported: (...)"（零网络、随 CLI
-  //      版本自动更新；产品面级 roster）。
-  // 静态表仅作 credit 元数据与 descriptor-static 兜底标签，绝不冒充实时。
-
-  /** 解析 CLI `--help` 里声明的模型 roster。空/畸形输入返回 []。
-   *  ⚠️ 名册很长时 yargs 会在任意列**折行**（实测把 `minimax-m3-pay` 从中间断成
-   *  `minimax-` + `m3-pay`），若按行/按逗号直接切会丢项或产生残片（同一命令两次运行
-   *  给出 18/19 两种结果）。故先去掉括号内所有空白再按逗号切：逗号是唯一分隔符，
-   *  折行插入的空白一律视为噪声。 */
-  function parseHelpModels(helpText) {
-    const m = /Currently supported:\s*\(([^)]+)\)/.exec(String(helpText || ''))
-    if (!m) return []
-    const out = []
-    for (const raw of m[1].replace(/\s+/g, '').split(',')) {
-      const id = raw.trim()
-      if (id && /^[A-Za-z0-9_.\-]+$/.test(id) && out.indexOf(id) < 0) out.push(id)
-    }
-    return out
-  }
-
-  /** 解析 codebuddy CLI 的可执行候选（env > npm 全局 shim > PATH 名）。 */
-  function cbCatalogCliCandidates(env) {
-    const e = env || cbCatalogEnv || {}
-    const out = []
-    const push = (p) => { if (p && out.indexOf(p) < 0) out.push(p) }
-    if (e.CODEBUDDY_BIN) push(String(e.CODEBUDDY_BIN))
-    const joinP = (a, b) => cbCatalogPathJoin(a, b)
-    if (e.APPDATA) push(joinP(joinP(e.APPDATA, 'npm'), 'codebuddy.cmd'))
-    if (e.APPDATA) push(joinP(joinP(e.APPDATA, 'npm'), 'codebuddy'))
-    push('codebuddy')
-    return out
-  }
-
-  const CLI_MODEL_CACHE = new Map() // backend → { at, mode, ids }
-  const CLI_MODEL_TTL_MS = 5 * 60 * 1000
-
-  // Windows .cmd/.bat 需要经 shell（Node 安全限制），但 `shell:true` + args 数组会触发
-  // DEP0190（参数不转义）。这里统一做法：把命令与参数拼成【一个】字符串交给 shell，
-  // 参数各自按 Windows 规则加引号 —— 既避开 DEP0190，又保证含空格参数不被拆开。
-  function quoteWinArg(a) {
-    const s = String(a)
-    if (s === '') return '""'
-    if (!/[\s"&|<>^]/.test(s)) return s
-    return '"' + s.replace(/"/g, '\\"') + '"'
-  }
-  function cliCommandLine(exe, args) {
-    return [exe].concat(args || []).map(quoteWinArg).join(' ')
-  }
-
-  /** 把候选拆成 { cmd, prefixArgs }：.mjs/.js/.cjs 目标经 node 包装（测试夹具与自定义
-   *  入口都靠这条），其余原样。 */
-  function splitExeSpec(exe) {
-    if (/\.(mjs|cjs|js)$/i.test(String(exe))) {
-      const proc = globalThis.process
-      return { cmd: (proc && proc.execPath) ? proc.execPath : 'node', prefixArgs: [String(exe)] }
-    }
-    return { cmd: String(exe), prefixArgs: [] }
-  }
-
-  function cliSpawnSync(exe, args, opts) {
-    const proc = globalThis.process
-    const child = (proc && typeof proc.getBuiltinModule === 'function') ? proc.getBuiltinModule('node:child_process') : null
-    if (!child || typeof child.spawnSync !== 'function') return null
-    const base = Object.assign({
-      encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
-    }, opts || {})
-    const spec = splitExeSpec(exe)
-    const argv = spec.prefixArgs.concat(args || [])
-    const isCmd = /\.(cmd|bat)$/i.test(spec.cmd)
-    if (isCmd) base.shell = true
-    try {
-      // shell 形态不带 args 数组（否则 DEP0190）；非 shell 形态正常传数组。
-      return isCmd
-        ? child.spawnSync(cliCommandLine(spec.cmd, argv), base)
-        : child.spawnSync(spec.cmd, argv, base)
-    } catch (e) { return null }
-  }
-
-  /**
-   * 同步取「CLI 声明的 roster」（零网络，随 CLI 版本走）。
-   * @returns {{ok:boolean, ids:string[], mode:string, error?:string}}
-   */
-  function fetchHelpModelsSync(env, opts) {
-    const o = opts || {}
-    const cands = cbCatalogCliCandidates(env)
-    let lastErr = null
-    for (const exe of cands) {
-      const r = cliSpawnSync(exe, ['--help'], { timeout: Math.max(1000, Math.min(o.timeoutMs || 12000, 30000)) })
-      if (!r || r.error) { lastErr = 'spawn failed: ' + String((r && r.error && r.error.message) || 'unavailable'); continue }
-      const text = String(r.stdout || '') + String(r.stderr || '')
-      const ids = parseHelpModels(text)
-      if (ids.length) return { ok: true, ids, mode: 'cli-help', exe }
-      lastErr = 'no roster in --help output'
-    }
-    return { ok: false, ids: [], mode: 'cli-help', error: lastErr || 'codebuddy CLI not found (set CODEBUDDY_BIN)' }
-  }
-
-  /**
-   * 同步版的账号探测（供设置面板用 —— 面板必须同步返回）。
-   * 走 spawnSync + 超时；结果进 5 分钟缓存，避免每次渲染都打一次网络。
-   *
-   * ⚠️ 为什么面板不能用 `--help` 名册顶替：实测本机 CLI 2.167.0 的 help 文本**本身
-   * 就是过时的** —— 它列 18 项且含已不存在的 `minimax-m3` / `kimi-k3-1`，缺真实的
-   * `glm-5.3-flashx` / `minimax-m3-pay` / `kimi-k3-2`；而账号探测给出 19 项且全部有效。
-   * 也就是说「CLI 声明」≠「服务端实际可用」，拿它当兜底会直接把错误清单展示给用户。
-   * 故这里宁可空列表 + 明确提示，也不展示已知错误的 roster。
-   * @returns {{ok:boolean, ids:string[], mode:string, error?:string}}
-   */
-  function probeAccountModelsSync(env, opts) {
-    const o = opts || {}
-    const cands = cbCatalogCliCandidates(env)
-    const extraEnv = o.envExtra || {}
-    const reasons = []
-    const timeout = Math.max(3000, Math.min(o.timeoutMs || 12000, 30000))
-    for (const exe of cands) {
-      const r = cliSpawnSync(exe, ['-p', 'hi', '--model', '__clb_probe_invalid__', '--output-format', 'text'], {
-        timeout,
-        env: Object.assign({}, (globalThis.process && globalThis.process.env) || {}, extraEnv)
-      })
-      if (!r || r.error) { reasons.push(exe + ': ' + String((r && r.error && (r.error.code || r.error.message)) || 'spawn failed')); continue }
-      const out = String(r.stdout || '') + String(r.stderr || '')
-      const ids = parseAccountModels(out)
-      if (ids && ids.length) return { ok: true, ids, mode: 'account-live', exe }
-      const head = String(out).replace(/\s+/g, ' ').trim().slice(0, 140)
-      reasons.push(exe + ': exit ' + r.status + ', no account roster' + (head ? ' — ' + head : ''))
-    }
-    return { ok: false, ids: [], mode: 'account-live', error: reasons.join('; ') || 'no CLI candidate to probe' }
-  }
-
-  /**
-   * 异步探测「该账号当前支持」的清单：用无效模型触发 CLI 的 400 报文。
-   * 对齐 workbuddy-auth 的权威白名单语义（服务器告诉我们这个账号能用什么）。
-   * @returns {Promise<{ok:boolean, ids:string[], mode:string, error?:string}>}
-   */
-  function probeAccountModels(env, opts) {
-    const o = opts || {}
-    const cands = cbCatalogCliCandidates(env)
-    const proc = globalThis.process
-    const child = (proc && typeof proc.getBuiltinModule === 'function') ? proc.getBuiltinModule('node:child_process') : null
-    if (!child || typeof child.spawn !== 'function') {
-      return Promise.resolve({ ok: false, ids: [], mode: 'account-live', error: 'no spawn capability in this host form' })
-    }
-    const extraEnv = o.envExtra || {}
-    return new Promise((resolve) => {
-      let idx = 0
-      // 记录每个候选的真实结局：区分「压根没找到 CLI」与「CLI 跑了但没吐账号名录」
-      // （后者通常是该面未登录 / 端点拒了）—— 报错文案必须能指导下一步，不能一律
-      // 说 "CLI not found"（本轮就踩到：codebuddy-en 无 token 时被误报成找不到 CLI）。
-      const reasons = []
-      const attempt = () => {
-        if (idx >= cands.length) {
-          resolve({
-            ok: false, ids: [], mode: 'account-live',
-            error: reasons.length ? reasons.join('; ') : 'no CLI candidate to probe',
-            notFound: reasons.every((r) => /not found|ENOENT|spawn/i.test(r))
-          })
-          return
-        }
-        const exe = cands[idx++]
-        let c
-        try {
-          // .cmd/.bat 需经 shell（Windows 安全限制）；.mjs/.js 经 node 包装。
-          // 与 cliSpawnSync 同一规则：shell 形态把命令拼成单字符串（避免 DEP0190）。
-          const spec = splitExeSpec(exe)
-          const isCmd = /\.(cmd|bat)$/i.test(spec.cmd)
-          const probeArgs = spec.prefixArgs.concat(['-p', 'hi', '--model', '__clb_probe_invalid__', '--output-format', 'text'])
-          const opts = {
-            stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
-            env: Object.assign({}, proc.env, extraEnv)
-          }
-          c = isCmd
-            ? child.spawn(cliCommandLine(spec.cmd, probeArgs), Object.assign({ shell: true }, opts))
-            : child.spawn(spec.cmd, probeArgs, opts)
-        } catch (e) { reasons.push(exe + ': spawn threw ' + String(e && e.message || e)); attempt(); return }
-        let out = ''
-        const timer = setTimeout(() => { try { c.kill() } catch (e) { } }, Math.max(5000, Math.min(o.timeoutMs || 30000, 90000)))
-        const onData = (d) => { out += d; if (out.length > 400000) out = out.slice(-200000) }
-        c.stdout.on('data', onData)
-        c.stderr.on('data', onData)
-        c.on('error', (e) => {
-          clearTimeout(timer)
-          reasons.push(exe + ': ' + String((e && e.code) || (e && e.message) || 'spawn error'))
-          attempt()
-        })
-        c.on('close', (code) => {
-          clearTimeout(timer)
-          const ids = parseAccountModels(out)
-          if (ids && ids.length) { resolve({ ok: true, ids, mode: 'account-live', exe }); return }
-          const head = String(out).replace(/\s+/g, ' ').trim().slice(0, 160)
-          reasons.push(exe + ': exit ' + code + ', no account roster' + (head ? ' — ' + head : ''))
-          attempt()
-        })
-      }
-      attempt()
-    })
-  }
-
-  /** 缓存读写（面板每次渲染都会取，避免反复起进程）。 */
-  function cachedCliModels(backend, load, nowMs) {
-    const at = Number(nowMs) || Date.now()
-    const hit = CLI_MODEL_CACHE.get(backend)
-    if (hit && at - hit.at < CLI_MODEL_TTL_MS) return hit
-    const v = typeof load === 'function' ? load() : load
-    if (v && v.ok && v.ids && v.ids.length) CLI_MODEL_CACHE.set(backend, { at, mode: v.mode, ids: v.ids.slice() })
-    return v
-  }
-
-  /** 读统一设置文件里 codebuddy 分区的 preferredBackend（meta 需要它才知道列哪个面）。 */
-  function currentPreferredBackend() {
-    try {
-      const e = cbCatalogEnv || {}
-      const p = cbCatalogRead(e.CLI_BRIDGE_SETTINGS_FILE || cbCatalogPathJoin(
-        e.DSH_HOME || (e.APPDATA ? cbCatalogPathJoin(e.APPDATA, 'DSH Desktop', 'dsh-home') : ''), 'cli-bridge-settings.json'))
-      if (!p) return null
-      const all = JSON.parse(p)
-      const v = all && all.codebuddy && all.codebuddy.preferredBackend
-      return typeof v === 'string' && v ? v : null
-    } catch (err) { return null }
-  }
-
-  // CLI 报错里解析「该账号当前支持的模型」（旧 core parseAccountModels verbatim）。
   function parseAccountModels(text) {
     const s = String(text || '')
     const anchor = s.indexOf('Currently supported models for your account')
@@ -1805,13 +1598,267 @@ const DEFAULT_BACKEND = 'codebuddy'
 const SETTINGS_KEYS = ['preferredBackend', 'defaultModel', 'codebuddyEnToken', 'endpointOverride']
 
 
+// ── inlined from providers/codebuddy-models-source.mjs ──
+// providers/codebuddy-models-source.mjs — codebuddy 的「模型清单探测 + 缓存」（第二片）.
+//
+// 从 codebuddy-catalog.mjs 抽出：探测要走子进程（同步/异步两条路），与纯解析逻辑内聚度低，
+// 分开后两个文件都在 600 行红线内（规则 §26）。scripts/build.mjs 会把 providers/codebuddy-*.mjs
+// 全部按字典序内联进 dynamic 沙箱同一作用域，所以这里仍可引用 catalog 的函数；ESM 形态走 import。
+// 注意：注释里绝不写出口令标记字面量（build 全局替换会把注释劈开导致生成物语法崩）。
+// import { cbCatalogEnv, cbCatalogRead, cbCatalogPathJoin, parseAccountModels } from './codebuddy-catalog.mjs'
+  // ── 实时模型清单（CLI 是一手权威来源，对齐 workbuddy-auth 的「权威白名单」思路）──
+  //
+  // 为什么不再以静态表/磁盘描述文件为主：实测本机 codebuddy CLI --
+  //   • 账号实时清单（用无效模型触发 400 报文）= 19 项
+  //   • CLI `--help` 声明的 roster         = 19 项，与账号清单完全一致
+  //   • 我们原先读的 product.ioa.json 静态表 = 16 项，且 2 个 id 已过时
+  //     （minimax-m3 → minimax-m3-pay、kimi-k3-1 → kimi-k3-2），另缺 4 个新模型。
+  //   静态表是「随包冻结」的，必然落后于 CLI，故只保留作倍率元数据与最后兜底。
+  //
+  // 两级实时来源（都不静默冒充权威数据，各带 source 标签）：
+  //   A. account-live —— 起 CLI 用无效模型探测「该账号当前支持」的清单（需该面已登录，
+  //      一次网络往返；对照 workbuddy-auth 的 agents[cli].models 白名单语义）。
+  //   B. cli-help     —— 解析 `--help` 的 "Currently supported: (...)"（零网络、随 CLI
+  //      版本自动更新；产品面级 roster）。
+  // 静态表仅作 credit 元数据与 descriptor-static 兜底标签，绝不冒充实时。
+
+  /** 解析 CLI `--help` 里声明的模型 roster。空/畸形输入返回 []。
+   *  ⚠️ 名册很长时 yargs 会在任意列**折行**（实测把 `minimax-m3-pay` 从中间断成
+   *  `minimax-` + `m3-pay`），若按行/按逗号直接切会丢项或产生残片（同一命令两次运行
+   *  给出 18/19 两种结果）。故先去掉括号内所有空白再按逗号切：逗号是唯一分隔符，
+   *  折行插入的空白一律视为噪声。 */
+  function parseHelpModels(helpText) {
+    const m = /Currently supported:\s*\(([^)]+)\)/.exec(String(helpText || ''))
+    if (!m) return []
+    const out = []
+    for (const raw of m[1].replace(/\s+/g, '').split(',')) {
+      const id = raw.trim()
+      if (id && /^[A-Za-z0-9_.\-]+$/.test(id) && out.indexOf(id) < 0) out.push(id)
+    }
+    return out
+  }
+
+  /** 解析 codebuddy CLI 的可执行候选（env > npm 全局 shim > PATH 名）。 */
+  function cbCatalogCliCandidates(env) {
+    const e = env || cbCatalogEnv || {}
+    const out = []
+    const push = (p) => { if (p && out.indexOf(p) < 0) out.push(p) }
+    if (e.CODEBUDDY_BIN) push(String(e.CODEBUDDY_BIN))
+    const joinP = (a, b) => cbCatalogPathJoin(a, b)
+    if (e.APPDATA) push(joinP(joinP(e.APPDATA, 'npm'), 'codebuddy.cmd'))
+    if (e.APPDATA) push(joinP(joinP(e.APPDATA, 'npm'), 'codebuddy'))
+    push('codebuddy')
+    return out
+  }
+
+  const CLI_MODEL_CACHE = new Map() // backend → { at, mode, ids }
+  const CLI_MODEL_TTL_MS = 5 * 60 * 1000
+
+  // Windows .cmd/.bat 需要经 shell（Node 安全限制），但 `shell:true` + args 数组会触发
+  // DEP0190（参数不转义）。这里统一做法：把命令与参数拼成【一个】字符串交给 shell，
+  // 参数各自按 Windows 规则加引号 —— 既避开 DEP0190，又保证含空格参数不被拆开。
+  function quoteWinArg(a) {
+    const s = String(a)
+    if (s === '') return '""'
+    if (!/[\s"&|<>^]/.test(s)) return s
+    return '"' + s.replace(/"/g, '\\"') + '"'
+  }
+  function cliCommandLine(exe, args) {
+    return [exe].concat(args || []).map(quoteWinArg).join(' ')
+  }
+
+  /** 把候选拆成 { cmd, prefixArgs }：.mjs/.js/.cjs 目标经 node 包装（测试夹具与自定义
+   *  入口都靠这条），其余原样。 */
+  function splitExeSpec(exe) {
+    if (/\.(mjs|cjs|js)$/i.test(String(exe))) {
+      const proc = globalThis.process
+      return { cmd: (proc && proc.execPath) ? proc.execPath : 'node', prefixArgs: [String(exe)] }
+    }
+    return { cmd: String(exe), prefixArgs: [] }
+  }
+
+  function cliSpawnSync(exe, args, opts) {
+    const proc = globalThis.process
+    const child = (proc && typeof proc.getBuiltinModule === 'function') ? proc.getBuiltinModule('node:child_process') : null
+    if (!child || typeof child.spawnSync !== 'function') return null
+    const base = Object.assign({
+      encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
+    }, opts || {})
+    const spec = splitExeSpec(exe)
+    const argv = spec.prefixArgs.concat(args || [])
+    const isCmd = /\.(cmd|bat)$/i.test(spec.cmd)
+    if (isCmd) base.shell = true
+    try {
+      // shell 形态不带 args 数组（否则 DEP0190）；非 shell 形态正常传数组。
+      return isCmd
+        ? child.spawnSync(cliCommandLine(spec.cmd, argv), base)
+        : child.spawnSync(spec.cmd, argv, base)
+    } catch (e) { return null }
+  }
+
+  /**
+   * 同步取「CLI 声明的 roster」（零网络，随 CLI 版本走）。
+   * @returns {{ok:boolean, ids:string[], mode:string, error?:string}}
+   */
+  function fetchHelpModelsSync(env, opts) {
+    const o = opts || {}
+    const cands = cbCatalogCliCandidates(env)
+    let lastErr = null
+    for (const exe of cands) {
+      const r = cliSpawnSync(exe, ['--help'], { timeout: Math.max(1000, Math.min(o.timeoutMs || 12000, 30000)) })
+      if (!r || r.error) { lastErr = 'spawn failed: ' + String((r && r.error && r.error.message) || 'unavailable'); continue }
+      const text = String(r.stdout || '') + String(r.stderr || '')
+      const ids = parseHelpModels(text)
+      if (ids.length) return { ok: true, ids, mode: 'cli-help', exe }
+      lastErr = 'no roster in --help output'
+    }
+    return { ok: false, ids: [], mode: 'cli-help', error: lastErr || 'codebuddy CLI not found (set CODEBUDDY_BIN)' }
+  }
+
+  /**
+   * 同步版的账号探测（供设置面板用 —— 面板必须同步返回）。
+   * 走 spawnSync + 超时；结果进 5 分钟缓存，避免每次渲染都打一次网络。
+   *
+   * ⚠️ 为什么面板不能用 `--help` 名册顶替：实测本机 CLI 2.167.0 的 help 文本**本身
+   * 就是过时的** —— 它列 18 项且含已不存在的 `minimax-m3` / `kimi-k3-1`，缺真实的
+   * `glm-5.3-flashx` / `minimax-m3-pay` / `kimi-k3-2`；而账号探测给出 19 项且全部有效。
+   * 也就是说「CLI 声明」≠「服务端实际可用」，拿它当兜底会直接把错误清单展示给用户。
+   * 故这里宁可空列表 + 明确提示，也不展示已知错误的 roster。
+   * @returns {{ok:boolean, ids:string[], mode:string, error?:string}}
+   */
+  function probeAccountModelsSync(env, opts) {
+    const o = opts || {}
+    const cands = cbCatalogCliCandidates(env)
+    const extraEnv = o.envExtra || {}
+    const reasons = []
+    const timeout = Math.max(3000, Math.min(o.timeoutMs || 12000, 30000))
+    for (const exe of cands) {
+      const r = cliSpawnSync(exe, ['-p', 'hi', '--model', '__clb_probe_invalid__', '--output-format', 'text'], {
+        timeout,
+        env: Object.assign({}, (globalThis.process && globalThis.process.env) || {}, env || {}, extraEnv)
+      })
+      if (!r || r.error) { reasons.push(exe + ': ' + String((r && r.error && (r.error.code || r.error.message)) || 'spawn failed')); continue }
+      const out = String(r.stdout || '') + String(r.stderr || '')
+      const ids = parseAccountModels(out)
+      if (ids && ids.length) return { ok: true, ids, mode: 'account-live', exe }
+      const head = String(out).replace(/\s+/g, ' ').trim().slice(0, 140)
+      reasons.push(exe + ': exit ' + r.status + ', no account roster' + (head ? ' — ' + head : ''))
+    }
+    return { ok: false, ids: [], mode: 'account-live', error: reasons.join('; ') || 'no CLI candidate to probe' }
+  }
+
+  /**
+   * 异步探测「该账号当前支持」的清单：用无效模型触发 CLI 的 400 报文。
+   * 对齐 workbuddy-auth 的权威白名单语义（服务器告诉我们这个账号能用什么）。
+   * @returns {Promise<{ok:boolean, ids:string[], mode:string, error?:string}>}
+   */
+  function probeAccountModels(env, opts) {
+    const o = opts || {}
+    const cands = cbCatalogCliCandidates(env)
+    const proc = globalThis.process
+    const child = (proc && typeof proc.getBuiltinModule === 'function') ? proc.getBuiltinModule('node:child_process') : null
+    if (!child || typeof child.spawn !== 'function') {
+      return Promise.resolve({ ok: false, ids: [], mode: 'account-live', error: 'no spawn capability in this host form' })
+    }
+    const extraEnv = o.envExtra || {}
+    return new Promise((resolve) => {
+      let idx = 0
+      // 记录每个候选的真实结局：区分「压根没找到 CLI」与「CLI 跑了但没吐账号名录」
+      // （后者通常是该面未登录 / 端点拒了）—— 报错文案必须能指导下一步，不能一律
+      // 说 "CLI not found"（本轮就踩到：codebuddy-en 无 token 时被误报成找不到 CLI）。
+      const reasons = []
+      const attempt = () => {
+        if (idx >= cands.length) {
+          resolve({
+            ok: false, ids: [], mode: 'account-live',
+            error: reasons.length ? reasons.join('; ') : 'no CLI candidate to probe',
+            notFound: reasons.every((r) => /not found|ENOENT|spawn/i.test(r))
+          })
+          return
+        }
+        const exe = cands[idx++]
+        let c
+        try {
+          // .cmd/.bat 需经 shell（Windows 安全限制）；.mjs/.js 经 node 包装。
+          // 与 cliSpawnSync 同一规则：shell 形态把命令拼成单字符串（避免 DEP0190）。
+          const spec = splitExeSpec(exe)
+          const isCmd = /\.(cmd|bat)$/i.test(spec.cmd)
+          const probeArgs = spec.prefixArgs.concat(['-p', 'hi', '--model', '__clb_probe_invalid__', '--output-format', 'text'])
+          const opts = {
+            stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+            env: Object.assign({}, proc.env, env || {}, extraEnv)
+          }
+          c = isCmd
+            ? child.spawn(cliCommandLine(spec.cmd, probeArgs), Object.assign({ shell: true }, opts))
+            : child.spawn(spec.cmd, probeArgs, opts)
+        } catch (e) { reasons.push(exe + ': spawn threw ' + String(e && e.message || e)); attempt(); return }
+        let out = ''
+        const timer = setTimeout(() => { try { c.kill() } catch (e) { } }, Math.max(5000, Math.min(o.timeoutMs || 30000, 90000)))
+        const onData = (d) => { out += d; if (out.length > 400000) out = out.slice(-200000) }
+        c.stdout.on('data', onData)
+        c.stderr.on('data', onData)
+        c.on('error', (e) => {
+          clearTimeout(timer)
+          reasons.push(exe + ': ' + String((e && e.code) || (e && e.message) || 'spawn error'))
+          attempt()
+        })
+        c.on('close', (code) => {
+          clearTimeout(timer)
+          const ids = parseAccountModels(out)
+          if (ids && ids.length) { resolve({ ok: true, ids, mode: 'account-live', exe }); return }
+          const head = String(out).replace(/\s+/g, ' ').trim().slice(0, 160)
+          reasons.push(exe + ': exit ' + code + ', no account roster' + (head ? ' — ' + head : ''))
+          attempt()
+        })
+      }
+      attempt()
+    })
+  }
+
+  /** 缓存读写（面板每次渲染都会取，避免反复起进程）。 */
+  function cachedCliModels(backend, load, nowMs) {
+    const at = Number(nowMs) || Date.now()
+    const hit = CLI_MODEL_CACHE.get(backend)
+    if (hit && at - hit.at < CLI_MODEL_TTL_MS) return hit
+    // 不传 load = 纯只读缓存（未命中返回 undefined）。设置面板靠这条避免每次渲染都 spawn。
+    if (typeof load !== 'function') return undefined
+    const v = load()
+    if (v && v.ok && v.ids && v.ids.length) CLI_MODEL_CACHE.set(backend, { at, mode: v.mode, ids: v.ids.slice() })
+    return v
+  }
+
+  /**
+   * 手动拉取成功后回填缓存（契约 §3.2 的 refreshModels 用），让随后的 meta() 能直接命中。
+   * 只接受非空 ids —— 空结果绝不入缓存，否则下次渲染会显示"有缓存但没内容"。
+   */
+  function rememberCliModels(backend, ids, mode, nowMs) {
+    if (!Array.isArray(ids) || !ids.length) return false
+    CLI_MODEL_CACHE.set(backend, { at: Number(nowMs) || Date.now(), mode: mode || 'account-live', ids: ids.slice() })
+    return true
+  }
+
+  /** 读统一设置文件里 codebuddy 分区的 preferredBackend（meta 需要它才知道列哪个面）。 */
+  function currentPreferredBackend() {
+    try {
+      const e = cbCatalogEnv || {}
+      const p = cbCatalogRead(e.CLI_BRIDGE_SETTINGS_FILE || cbCatalogPathJoin(
+        e.DSH_HOME || (e.APPDATA ? cbCatalogPathJoin(e.APPDATA, 'DSH Desktop', 'dsh-home') : ''), 'cli-bridge-settings.json'))
+      if (!p) return null
+      const all = JSON.parse(p)
+      const v = all && all.codebuddy && all.codebuddy.preferredBackend
+      return typeof v === 'string' && v ? v : null
+    } catch (err) { return null }
+  }
+
+  // CLI 报错里解析「该账号当前支持的模型」（旧 core parseAccountModels verbatim）。
 // ── inlined from providers/codebuddy-models-tool.mjs ──
 // providers/codebuddy-models-tool.mjs — codebuddy_models 工具定义（纯逻辑）。
 //
 // 从 codebuddy-catalog.mjs 再拆出：两个文件都要留在 600 行红线内（规则 §26）。
 // scripts/build.mjs 会把 providers/codebuddy-*.mjs 全部内联进 dynamic 沙箱的同一个
 // 作用域，所以这里仍可引用 catalog 的函数（沙箱内天然可见）；ESM 形态走本文件的 import。
-// ⚠️ 注释里绝不写出口令标记字面量（build 全局替换会劈开注释 → 生成物语法崩）。// import { currentPreferredBackend, probeAccountModels, fetchHelpModelsSync } from './codebuddy-catalog.mjs'
+// ⚠️ 注释里绝不写出口令标记字面量（build 全局替换会劈开注释 → 生成物语法崩）。
+// import { currentPreferredBackend, probeAccountModels, fetchHelpModelsSync } from './codebuddy-models-source.mjs'
 // ── codebuddy_models 工具定义（搬自主文件；纯逻辑，依赖经 ctx 注入）────────────
 // ctx = { env, deps, resolveBackend, modelCatalogDetailed, getAccountCatalog }
 function codebuddyModelsTool(ctx) {
@@ -1915,7 +1962,8 @@ function codebuddyModelsTool(ctx) {
 //
 // 旧 preset/codebuddy-first verbatim（契约 §8 红线）：字段名/枚举/描述一字不改。
 // 放这里是为了让 catalog 与主描述符都留在 600 行红线内（规则 §26）。
-// ⚠️ 注释里绝不写出口令标记字面量（build 全局替换会把注释劈开）。// import { BACKEND_ENUM, MODEL_DESCRIPTION } from './codebuddy-catalog.mjs'
+// ⚠️ 注释里绝不写出口令标记字面量（build 全局替换会把注释劈开）。
+// import { BACKEND_ENUM, MODEL_DESCRIPTION } from './codebuddy-catalog.mjs'
 // ── 三工具 schema（旧 preset/codebuddy-first verbatim；契约 §8 红线）────────────
 // 纯数据，无依赖 —— 放这里是为了让主描述符留在 600 行红线内（规则 §26）。
 const RUN_PARAMS = {

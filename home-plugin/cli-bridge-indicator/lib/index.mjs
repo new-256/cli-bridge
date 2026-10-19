@@ -403,6 +403,54 @@ export function apply(ctx) {
           }).catch((e) => jsonRes(res, 400, { error: String(e && e.message || e) }))
         }
       }, 'cli-bridge: settings route'))
+      // 手动拉取可用项（契约 §3.2）：面板**不自动探测**，用户点按钮才走到这里。
+      // 业务失败一律 HTTP 200 + { ok:false, error }，不用 4xx/5xx —— 否则前端容易把
+      // 「没拉到」误当网络故障静默吞掉（本项目模型清单反复踩的坑）。
+      webCtx.effect(() => ws.register({
+        kind: 'exact', path: '/cli-bridge/settings/models',
+        handler: (req, res) => {
+          const method = String((req && req.method) || 'GET').toUpperCase()
+          if (method !== 'POST') { jsonRes(res, 405, { error: 'method not allowed' }); return }
+          readBody(req, 16 * 1024).then(async (text) => {
+            let provider = ''
+            try { provider = String((JSON.parse(text || '{}') || {}).provider || '') } catch (e) {
+              jsonRes(res, 200, { ok: false, provider: '', error: 'request body is not valid JSON' }); return
+            }
+            if (!provider || PROVIDER_IDS.indexOf(provider) < 0) {
+              jsonRes(res, 200, { ok: false, provider: provider, error: 'unknown provider ' + JSON.stringify(provider) + '; expected one of ' + PROVIDER_IDS.join(', ') })
+              return
+            }
+            let d = null
+            try { d = createProvider(provider, { env: process.env, process }) } catch (e) {
+              jsonRes(res, 200, { ok: false, provider: provider, error: 'provider load failed: ' + String(e && e.message || e) }); return
+            }
+            const fn = d && d.settings && d.settings.refreshModels
+            if (typeof fn !== 'function') {
+              jsonRes(res, 200, { ok: false, provider: provider, error: 'provider "' + provider + '" does not implement settings.refreshModels()' }); return
+            }
+            // 生效设置是扁平结构：snap[providerId] = 该 provider 的分区（见 settings.mjs normalizeAll）。
+            const snap = effectiveSettings({ env: process.env })
+            const sec = (snap && snap[provider]) || {}
+            try {
+              const r = (await fn(sec, process.env)) || {}
+              if (!r.ok || !Array.isArray(r.ids) || !r.ids.length) {
+                jsonRes(res, 200, {
+                  ok: false, provider: provider, source: r.source || null,
+                  error: r.error || 'provider returned no items'
+                })
+                return
+              }
+              const labels = (r.labels && typeof r.labels === 'object') ? r.labels : {}
+              jsonRes(res, 200, {
+                ok: true, provider: provider, source: r.source || null,
+                options: r.ids.map((id) => ({ value: String(id), label: String(labels[id] || id) }))
+              })
+            } catch (e) {
+              jsonRes(res, 200, { ok: false, provider: provider, error: 'refreshModels threw: ' + String(e && e.message || e) })
+            }
+          }).catch((e) => jsonRes(res, 200, { ok: false, provider: '', error: String(e && e.message || e) }))
+        }
+      }, 'cli-bridge: settings models route'))
       // agy 额度（可选增强，脚本缺失返回 { ok:false }）
       webCtx.effect(() => ws.register({
         kind: 'exact', path: '/agy-indicator/quota',

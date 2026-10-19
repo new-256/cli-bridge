@@ -1,28 +1,18 @@
 // providers/codebuddy.mjs — codebuddy provider descriptor。
 //
-// 移植基线：codebuddy-first-bridge v1.6.x 的纯逻辑与 preset/codebuddy-first 内联语义，
-// 逐字保持（契约 §8：工具入参语义与 schema 不许漂移）。provider 无关骨架在 bridge-kit。
-// 纯逻辑片：codebuddy-catalog.mjs（模型目录/凭据/探测）、codebuddy-schemas.mjs（三 schema）、
-// codebuddy-models-tool.mjs（codebuddy_models 工具）。build 会把 codebuddy-*.mjs 全部
-// 内联进沙箱同一作用域。
+// 移植基线：codebuddy-first-bridge v1.6.x 的纯逻辑与 preset 内联语义，逐字保持（契约 §8： // 工具入参语义与 schema 不许漂移）。provider 无关骨架在 bridge-kit。纯逻辑片：
+// codebuddy-catalog.mjs（模型目录/凭据）、codebuddy-models-source.mjs（探测+缓存）、
+// codebuddy-models-tool.mjs（codebuddy_models）、codebuddy-consts.mjs（POLICY_TEXT/后端表）、
+// codebuddy-schemas.mjs（三 schema）。
 //
-// 红线：本文件会被内联进 dynamic 沙箱 —— 绝不出现元环境字面量；process/env/fs 只经
-// deps 注入或 typeof 守卫读取；宿主能力全部走 attach(hostOpts)。isLimited 用本文件
-// 自定义的中文限流表（旧 core verbatim），不用 kit 通用表。
+// 红线：本文件会被内联进 dynamic 沙箱 —— 绝不出现元环境字面量；process/env/fs 只经 deps
+// 注入或 typeof 守卫读取；宿主能力全部走 attach(hostOpts)。isLimited 用本文件自定义的中文
+// 限流表（旧 core verbatim），不用 kit 通用表。命名纪律：顶层名绝不与 bridge-kit 同名
+// （沙箱里同作用域），故限流表带 CODEBUDDY_ 前缀。
+// ⚠️ 各片在沙箱里被内联进**同一作用域**（build 做全局文本替换）：注释里绝不写占位标记的
+// 字面量，否则注释会被替换成正文代码而劈开，生成物语法崩。
 import { createStatusEngine, createRunner, clampInt } from '../core/bridge-kit.mjs'
 
-// ── 提示词策略段（旧 preset POLICY_TEXT verbatim；systemPrompt order 5）────────
-// （LIMIT_RE 在 kit L33 已有，故此处带 CODEBUDDY_ 前缀）。
-// codebuddy-en 凭据的第三条通道：DSH 凭据库里可能已有的 workbuddy key（旧 core verbatim）。
-
-// 离线/读不到描述文件时的回退静态表（真机按账号实测快照，2026-09）。
-// 模型目录相关常量与纯逻辑已拆到 ./codebuddy-catalog.mjs —— 主文件原 864 行远超
-// 600 行红线（规则 §26）。
-//   • ESM 形态（preset / MCP / 测试）：直接 import。
-//   • dynamic 沙箱形态：scripts/build.mjs 把该文件内联进同一作用域（模板顶部的
-//     第三个占位标记），import 行被 stripModuleSyntax 剥掉，同名标识符天然可见。
-//     ⚠️ 本注释里绝不写出那个标记的字面量：build 做全局文本替换，注释中出现同样
-//     会被替换成正文代码，把注释劈开 → 生成物语法崩。
 import {
   BACKEND_MODEL_IDS, PRODUCT_DESCRIPTOR_ENV, CREDIT_ID_ALIASES, MODEL_DESCRIPTION, BACKEND_ENUM,
   accountConfigCandidates, productDescriptorCandidates, normalizeProductConfig,
@@ -30,10 +20,13 @@ import {
   backendModelCatalog, rememberAccountCatalog, getAccountCatalog, parseAccountModels,
   modelCatalogDetailed, formatModelCatalogText, cbCatalogSetHost,
   BACKEND_AUTH_IDS, CREDENTIAL_KEYS, readBackendAuthDomain,
-  readDshWorkbuddyToken, resolveEnToken,
-  fetchHelpModelsSync, cachedCliModels, currentPreferredBackend, parseHelpModels, probeAccountModelsSync,
-
+  readDshWorkbuddyToken, resolveEnToken
 } from './codebuddy-catalog.mjs'
+// 探测/缓存那一层单独一片（要走子进程，与纯解析内聚度低；见 codebuddy-models-source.mjs 头注）。
+import {
+  fetchHelpModelsSync, cachedCliModels, currentPreferredBackend, parseHelpModels, probeAccountModelsSync,
+  rememberCliModels, probeAccountModels
+} from './codebuddy-models-source.mjs'
 import { codebuddyModelsTool } from './codebuddy-models-tool.mjs'
 import { POLICY_TEXT, CODEBUDDY_LIMIT_RE, BACKENDS, BACKEND_ENDPOINTS, AUTH_DOMAIN_ENDPOINTS, BACKEND_LABELS, BACKEND_ALIASES, DEFAULT_BACKEND, SETTINGS_KEYS } from './codebuddy-consts.mjs'
 import { RUN_PARAMS, CONTINUE_PARAMS, STATUS_PARAMS } from './codebuddy-schemas.mjs'
@@ -424,15 +417,13 @@ export default function defineProvider(deps = {}) {
       }
     },
 
-    // codebuddy_models：实时列出本机 codebuddy 可用模型（账号探测优先，回落 CLI 名册）。
-    // 只在宿主有 spawn/fs 能力时注册（preset 注入 deps.process / MCP 注入 deps.nodeChild；
-    // dynamic 沙箱形态省略）。**失败必须 ok:false + 可操作错误**，绝不静默返回空列表或
-    // 伪造模型（工作手册红线 §7；对照 workbuddy-auth 的 catalog-store 静默降级 —— 不照抄）。
+    // codebuddy_models：只在宿主有 spawn/fs 能力时注册（preset 注 deps.process；MCP 注
+    // deps.nodeChild；dynamic 沙箱省略）。**失败必须 ok:false + 可操作错误**，绝不静默返回
+    // 空列表或伪造模型（红线 §7；对照 workbuddy-auth 的 catalog-store 静默降级 —— 不照抄）。
     extraTools: (deps.process || deps.nodeChild || deps.nodeFs) ? [codebuddyModelsTool({
       env, deps, BACKEND_ENUM, normalizeBackend, resolveBackend, modelCatalogDetailed, getAccountCatalog,
-      // faceEnv：让账号探测打到**请求的那个产品面**（与 buildArgv 完全同一套端点/凭据
-      // 注入规则）。缺了它，探测会走 CLI 自身默认登录面 —— 标着 codebuddy-en 实际却
-      // 问的是 codebuddy 面，得出的清单看着对其实是另一个面的（本轮修的就是这类偏差）。
+      // faceEnv：让账号探测打到**请求的那个产品面**（与 buildArgv 同一套端点/凭据注入）。
+      // 缺了它探测会走 CLI 自身默认登录面 —— 标着 codebuddy-en 却去问 codebuddy 面。
       faceEnv: (backend) => {
         try {
           const settings = (deps.settings && typeof deps.settings === 'object') ? deps.settings : {}
@@ -451,36 +442,28 @@ export default function defineProvider(deps = {}) {
       defaults: () => normalizeSettings(null),
       normalize: (raw) => normalizeSettings(raw),
       meta() {
-        // defaultModel 下拉 = 账号级实时清单（服务端裁决）。走过的弯路留档：
-        //   ① 随包冻结的 product.ioa.json → 16 项、2 个 id 已改名（错）
-        //   ② CLI `--help` 的 "Currently supported:" → 18 项，但那是 CLI 构建期烙进去的，
-        //      实测同样滞后（含已废弃的 minimax-m3/kimi-k3-1，缺 glm-5.3-flashx 等）
-        //   ③ 现在：用无效模型探测让服务端回「该账号当前支持」的 19 项 —— 唯一权威源。
-        // 面板同步回调故用 spawnSync 探测并缓存 5 分钟；失败则下拉留空 + 明确提示，
-        // 绝不展示已知错误的 roster。面跟随 preferredBackend（旧实现硬编码 codebuddy 面）。
-        const face = (currentPreferredBackend() && normalizeBackend(currentPreferredBackend())) || DEFAULT_BACKEND
-        const faceEnv = (() => {
-          try {
-            const s = deps.settings || {}
-            const authDomain = readBackendAuthDomain(face, { env })
-            const tok = resolveEnToken(face === 'codebuddy-en' ? s.codebuddyEnToken : null, { env })
-            return endpointEnv(face, s.endpointOverride, authDomain, tok.token) || {}
-          } catch (e) { return {} }
-        })()
-        const live = cachedCliModels(face, () => probeAccountModelsSync(env, { envExtra: faceEnv, timeoutMs: 12000 }))
+        // defaultModel 下拉 = 缓存里的账号级清单。走过的弯路：静态表层（16 项、2 个 id 已改名）
+        // → CLI `--help` 名册（18 项但仍滞后、含已废 id）→ 无效模型探测让服务端回权威清单。
+        // 契约 §3.2 起 meta() **只读缓存、绝不 spawn**；探测由「拉取可用模型」触发 refreshModels。
+        // 面的取值必须与 refreshModels 同源（先宿主设置、再设置文件），否则会「刷新成功但下拉仍空」。
+        const face0 = (deps.settings && deps.settings.preferredBackend) || currentPreferredBackend()
+        const face = normalizeBackend(face0) || DEFAULT_BACKEND
+        const live = cachedCliModels(face)          // 只读：未命中返回 undefined
         let options = []
-        let note = ''
-        if (live && live.ok && live.ids.length) {
+        let note = '点下方「拉取可用模型」从服务端获取本账号的可用清单；当前面：' + face +
+          '。日常任务优先免费（x0.00）。'
+        if (live && live.ids && live.ids.length) {
           const detail = modelCatalogDetailed(face, { env, accountModels: live.ids })
           const byId = new Map(detail.map((x) => [x.id, x]))
           options = live.ids.map((id) => {
             const d = byId.get(id)
             return { value: id, label: (d && d.label) || id }
           })
-          note = '账号实时清单（' + live.ids.length + ' 项，服务端裁决）；当前面：' + face + '。日常任务优先免费（x0.00）。'
+          note = '上次拉取结果（' + live.ids.length + ' 项，服务端裁决）；当前面：' + face +
+            '。要更新请重新点「拉取可用模型」。'
         } else {
-          note = '未能读取该账号的模型清单（' + String((live && live.error) || 'unknown') +
-            '）。请确认该产品面已登录（在 codebuddy CLI 里完成登录），或手动输入模型 id。'
+          note = '尚未拉取（或该面未登录）。点「拉取可用模型」让服务端回吐本账号的清单；' +
+            '此前也可直接手输模型 id。当前面：' + face + '。'
         }
         return {
           titleSuffix: 'CodeBuddy',
@@ -493,6 +476,7 @@ export default function defineProvider(deps = {}) {
             {
               key: 'defaultModel', label: '默认模型', type: 'select', allowCustom: true, placeholder: '(CLI 默认)',
               options,
+              refresh: { label: '拉取可用模型' },
               note
             },
             { key: 'codebuddyEnToken', label: 'WorkBuddy 国际版 Token', type: 'secret', note: '仅 backend="codebuddy-en" 需要。国际版登录 token 被 protector key 封装不落盘，只能手工提供；留空则自动尝试 DSH 凭据库的 WORKBUDDY_TOKEN。' },
@@ -513,6 +497,44 @@ export default function defineProvider(deps = {}) {
           if (d.hint) lines.push('  ⚠ ' + d.hint)
         }
         return lines.join('\n')
+      },
+      /**
+       * 手动拉取（契约 §3.2）：唯一权威源 = 无效模型触发的服务端 400 报文（「Currently
+       * supported models for your account」）。成功后回填缓存，settingsView 再取 meta 即显示。
+       * 失败一律 ok:false + 可操作错误 —— 绝不返回 {ok:true, ids:[]}，也绝不把静态表/CLI
+       * 自报名册冒充成账号可用清单（0.2.6~0.2.7 反复踩过的坑）。
+       */
+      async refreshModels(settings, envOverride) {
+        const s = normalizeSettings(settings)
+        const face = normalizeBackend(s.preferredBackend) || DEFAULT_BACKEND
+        const e = envOverride || env
+        // 端点/凭据注入与 buildArgv 同一套规则（否则会拿 A 面凭据去问 B 面）。
+        let faceEnv = {}
+        try {
+          const authDomain = readBackendAuthDomain(face, { env: e })
+          const tok = resolveEnToken(face === 'codebuddy-en' ? s.codebuddyEnToken : null, { env: e })
+          faceEnv = endpointEnv(face, s.endpointOverride, authDomain, tok.token) || {}
+        } catch (err) { faceEnv = {} }
+        let probe
+        try {
+          probe = await probeAccountModels(e, { envExtra: faceEnv, timeoutMs: 90000 })
+        } catch (err) {
+          return { ok: false, ids: [], source: 'account-live', error: '探测进程异常：' + String((err && err.message) || err) }
+        }
+        if (!probe || !probe.ok || !probe.ids || !probe.ids.length) {
+          return {
+            ok: false, ids: [], source: 'account-live',
+            error: '未能从「' + face + '」面获取账号模型清单：' + String((probe && probe.error) || 'no roster') +
+              '。常见原因：该面未登录（先在 codebuddy CLI 里 /login）、token 缺失或端点不通；' +
+              '也可在「默认后端」里换个面再拉。'
+          }
+        }
+        rememberCliModels(face, probe.ids, 'account-live')
+        // 标签沿用目录展示名（没有就回落 id），与下拉其它项一致。
+        const detail = modelCatalogDetailed(face, { env: e, accountModels: probe.ids })
+        const labels = {}
+        for (const x of (Array.isArray(detail) ? detail : [])) if (x && x.label) labels[x.id] = x.label
+        return { ok: true, ids: probe.ids, labels, source: 'account-live' }
       }
     },
 

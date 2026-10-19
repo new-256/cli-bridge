@@ -9,6 +9,48 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 > - CodeBuddy 线：[docs/history/codebuddy/CHANGELOG.md](docs/history/codebuddy/CHANGELOG.md)（终版 1.6.2）
 > - MiMo 线：[docs/history/mimo/CHANGELOG.md](docs/history/mimo/CHANGELOG.md)（终版 1.2.9）
 
+## [0.2.10] - 2026-10-20
+
+> ⚠️ **0.2.9 的 dynamic 沙箱形态在 opencode / mimo 两家是坏的**，本版修复。若你在用这两家的
+> dynamic 形态，请升级。
+
+### Fixed
+- **`dynamic/opencode.host.js` 与 `dynamic/mimo.host.js` 运行即 `ReferenceError`**（0.2.9 已发布）。
+  根因：这两家的代码被拆进片文件（`opencode-exe.mjs` / `mimo-pure.mjs`）后，它们的 dynamic
+  **模板里漏了片文件占位标记**，build 只在模板声明占位时才内联片文件 —— 于是生成物里
+  `candidateExePaths` / `parseMimoJson` 只有引用、没有定义。实测证据：修前 `apply()` 直接抛
+  `ReferenceError: candidateExePaths is not defined`；修后两家 `apply()` 正常。
+  已补占位并重建，生成物内符号定义数 0 → 1。
+- **新增永久防线**：`tests/{opencode,mimo}/dynamic-template.test.mjs` 断言生成物里片文件符号
+  **"定义数 = 1"**（而不是"出现过"）—— 纯求值检查抓不到这类缺陷，因为未定义标识符只在函数
+  被调用时才炸。
+- **EOL 与 `.gitattributes` 不一致**：`providers/codebuddy*.mjs` 等工作区曾被写成 CRLF
+  （PowerShell 默认行为），而仓库要求 `eol=lf`，导致生成物按 CRLF 源拼出、别的机器 clone 后
+  `build --check` 必然 drift（`dynamic/codebuddy.host.js` 甚至被 git 当二进制）。
+  已规范化全部源码为 LF 并重建；`git ls-files --eol` 复核全部 `w/lf`。
+
+### Added
+- **模型下拉改为「手动拉取」（契约 §3.2）** —— 用户反馈 codebuddy 各产品面都自动拿不到可用
+  清单，希望加刷新按钮、每次手动拉取：
+  - `settings.meta()` **不再自动探测**（面板同步回调，探测会拖慢首屏；且探不到时下拉空着，
+    用户分不清"没模型"与"没拉到"）。现在只读缓存，字段声明 `refresh: { label }` 即渲染按钮。
+  - 新增可选契约 `settings.refreshModels(settings, env) → { ok, ids, labels?, source, error? }`，
+    已由 5 家实现（codebuddy / opencode / mimo / claude / codex）；agy 无模型字段故不适用。
+  - 新端点 `POST /cli-bridge/settings/models`（body `{provider}`）：**业务失败恒返回 HTTP 200**
+    + `{ok:false, error}`，不用 4xx/5xx —— 否则前端容易把"没拉到"当网络故障静默吞掉。
+  - `client.js` 渲染「拉取可用模型」按钮 + 进行中态 + 结果/错误文本；拿到 options 只更新展示态，
+    用户选中仍走原有 POST 保存。
+  - 各家的 `source` 如实标注（`account-live` / `live` / `opencode-models` / `mimo-models`）。
+
+### 说明（各团队实测发现并修掉的真缺陷）
+- claude：异步探测在 spawn 失败时 `error` 与 `close` 各推进一次候选游标，会**跳过后面能跑的
+  候选**（用户填错 binPath 就再也走不到有效 exe）；已加 per-attempt 守卫 + 回归钉子。
+- codex：live `GET /models` 无超时，端点卡住会让面板一直转圈；已加 AbortController 上界（20s）。
+- codebuddy/claude：`meta()` 与 `refreshModels` 的"产品面/缓存键"口径必须同源，否则会出现
+  「刷新成功但下拉仍空」。已统一取值来源并各加用例。
+- codebuddy：探测进程的环境曾硬编码 `process.env`，不尊重调用者传入的 env，导致测试无法隔离
+  （会回落到本机真实 CLI 并"假装成功"）。现传入 env 可覆盖。
+
 ## [0.2.9] - 2026-10-20
 
 ### Added

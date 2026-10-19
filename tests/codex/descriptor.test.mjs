@@ -337,26 +337,106 @@ test('failureHint：模型/凭据/沙箱/不可用 各有可行动指引', () =>
   assert.equal(provider.failureHint({ ok: true, status: 'SUCCESS' }), '')
 })
 
-// ── settings ────────────────────────────────────────────────────────────────
-test('settings.normalize：未知键丢弃、枚举非法归零、字符串 trim', () => {
-  const out = provider.settings.normalize({ binPath: ' C:/codex.exe ', defaultModel: ' m ', sandboxMode: 'bogus', approvalPolicy: 'never', evil: 'x' })
-  assert.deepEqual(out, { binPath: 'C:/codex.exe', defaultModel: 'm', sandboxMode: '', approvalPolicy: 'never' })
-  assert.deepEqual(provider.settings.normalize(null), { binPath: '', defaultModel: '', sandboxMode: '', approvalPolicy: '' })
-})
+// ── settings.meta / settings.refreshModels（契约 §3.2 手动拉取）────────────────
+// 假 fetch：只在 refreshModels / codex_models 被调用时才该有流量；meta() 一次都不许有。
+function fetchSpy(response, stats) {
+  return async () => {
+    stats.calls += 1
+    return {
+      status: response.status,
+      text: async () => (typeof response.body === 'string' ? response.body : JSON.stringify(response.body))
+    }
+  }
+}
+const LIVE_PAYLOAD = {
+  data: [
+    { id: 'live/free-model:free', pricing: { prompt: 0, completion: 0 } },
+    { id: 'live/paid-model', pricing: { prompt: '0.000001', completion: '0.000002' } }
+  ]
+}
 
-test('settings.meta：四个字段齐备；无 CODEX_HOME 时 defaultModel 候选项为空且有说明', () => {
-  const m = provider.settings.meta({})
+test('settings.meta：只读缓存、绝不探测（★ 不发请求），字段带 refresh 标记', () => {
+  const stats = { calls: 0 }
+  // 端点配得像真的，且 fetch 会成功 —— 若 meta() 偷偷探测，calls 就不再是 0。
+  const p = defineProvider({ env: {}, fetch: fetchSpy({ status: 200, body: LIVE_PAYLOAD }, stats) })
+  const env = { CODEX_BRIDGE_MODELS_URL: 'https://meta.test/never-probe/models' }
+  const m = p.settings.meta(env)
   assert.equal(m.titleSuffix, 'Codex')
   const keys = m.fields.map((f) => f.key)
   assert.deepEqual(keys, ['binPath', 'defaultModel', 'sandboxMode', 'approvalPolicy'])
   const model = m.fields.find((f) => f.key === 'defaultModel')
   assert.equal(model.type, 'select')
   assert.equal(model.allowCustom, true)
-  assert.deepEqual(model.options, [])
-  // 拿不到清单时必须说清楚，而不是假装有列表。
-  assert.match(model.note, /未能读取任何模型清单/)
+  assert.deepEqual(model.options, [], '未拉取 → 空下拉（不会自动探测）')
+  assert.deepEqual(model.refresh, { label: '拉取可用模型' })
+  assert.match(model.note, /拉取可用模型/)
+  assert.match(model.note, /还没拉取过/)
+  assert.equal(stats.calls, 0, '★ meta() 绝不能发请求/起进程')
   const sandbox = m.fields.find((f) => f.key === 'sandboxMode')
   assert.ok(sandbox.options.some((o) => o.value === 'danger-full-access'))
+})
+
+test('settings.refreshModels：成功 → ok:true + ids + labels（[free] 标注）+ 写回缓存（meta 命中）', async () => {
+  const stats = { calls: 0 }
+  const p = defineProvider({ env: {}, fetch: fetchSpy({ status: 200, body: LIVE_PAYLOAD }, stats) })
+  const env = { CODEX_BRIDGE_MODELS_URL: 'https://refresh.test/ok/models' }
+  const r = await p.settings.refreshModels({}, env)
+  assert.equal(r.ok, true, JSON.stringify(r))
+  assert.deepEqual(r.ids, ['live/free-model:free', 'live/paid-model'])
+  assert.equal(r.source, 'live')
+  assert.match(r.labels['live/free-model:free'], /\[free\]/)
+  assert.equal(r.labels['live/paid-model'], 'live/paid-model')
+  assert.equal(stats.calls, 1)
+  // 写回缓存的效果：随后 meta() 直接命中，且不再发请求。
+  const model = p.settings.meta(env).fields.find((f) => f.key === 'defaultModel')
+  assert.deepEqual(model.options.map((o) => o.value), ['live/free-model:free', 'live/paid-model'])
+  assert.match(model.note, /上次拉取到 2 个模型/)
+  assert.equal(stats.calls, 1, '★ meta() 命中缓存时不许再发请求')
+})
+
+test('settings.refreshModels：无 base_url → ok:false + 空 ids + 可操作错误', async () => {
+  const p = defineProvider({ env: {} })
+  const r = await p.settings.refreshModels({}, {})
+  assert.equal(r.ok, false)
+  assert.deepEqual(r.ids, [])
+  assert.equal(r.source, 'live')
+  assert.match(r.error, /base_url/)
+  assert.match(r.error, /排查顺序/, '错误必须告诉用户下一步怎么做')
+})
+
+test('settings.refreshModels：端点 401 → 错误指向 token 且带排查步骤', async () => {
+  const p = defineProvider({ env: {}, fetch: fetchSpy({ status: 401, body: 'bad token' }, { calls: 0 }) })
+  const r = await p.settings.refreshModels({}, { CODEX_BRIDGE_MODELS_URL: 'https://refresh.test/401/models' })
+  assert.equal(r.ok, false)
+  assert.deepEqual(r.ids, [])
+  assert.match(r.error, /HTTP 401/)
+  assert.match(r.error, /credential/)
+  assert.match(r.error, /排查顺序/)
+})
+
+test('settings.refreshModels：端点回 2xx 但零可用项 → 仍然 ok:false（绝不 ok:true 空清单）', async () => {
+  const p = defineProvider({ env: {}, fetch: fetchSpy({ status: 200, body: { data: [] } }, { calls: 0 }) })
+  const r = await p.settings.refreshModels({}, { CODEX_BRIDGE_MODELS_URL: 'https://refresh.test/empty/models' })
+  assert.equal(r.ok, false)
+  assert.deepEqual(r.ids, [])
+  assert.match(r.error, /0 usable models/)
+})
+
+test('settings.normalize：未知键丢弃、枚举非法归零、字符串 trim', () => {
+  const out = provider.settings.normalize({ binPath: ' C:/codex.exe ', defaultModel: ' m ', sandboxMode: 'bogus', approvalPolicy: 'never', evil: 'x' })
+  assert.deepEqual(out, { binPath: 'C:/codex.exe', defaultModel: 'm', sandboxMode: '', approvalPolicy: 'never' })
+  assert.deepEqual(provider.settings.normalize(null), { binPath: '', defaultModel: '', sandboxMode: '', approvalPolicy: '' })
+})
+
+test('settings.meta：无 CODEX_HOME/端点时 defaultModel 候选项为空（说明由 §3.2 的 note 负责）', () => {
+  const m = provider.settings.meta({})
+  const keys = m.fields.map((f) => f.key)
+  assert.deepEqual(keys, ['binPath', 'defaultModel', 'sandboxMode', 'approvalPolicy'])
+  const model = m.fields.find((f) => f.key === 'defaultModel')
+  assert.equal(model.type, 'select')
+  assert.deepEqual(model.options, [])
+  // 空下拉的原因写在 note 里，而不是靠自动探测去"猜"。
+  assert.match(model.note, /拉取可用模型/)
 })
 
 test('settings.diagnose：一行文本带 bin/model/endpoint/sandbox/approval', () => {

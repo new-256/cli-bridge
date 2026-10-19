@@ -322,25 +322,103 @@ test('settings：keys/defaults/normalize', () => {
   assert.equal(s.normalize({ binPath: 42 }).binPath, '', '非字符串字段不进分区')
 })
 
-test('settings.meta：defaultModel 下拉来自实时探测（fixture），探测失败则空 + 明确说明', () => {
+// ── settings.meta / settings.refreshModels（契约 §3.2 手动拉取）────────────────
+test('settings.meta：只读缓存、绝不探测（契约 §3.2），字段带 refresh 标记', () => {
   resetModelsCache()
   const okEnv = { CLAUDE_BIN: FIX, USERPROFILE: '' }
   const meta = provider.settings.meta(okEnv)
   assert.equal(meta.titleSuffix, 'Claude Code')
   const modelField = meta.fields.find((f) => f.key === 'defaultModel')
-  assert.deepEqual(modelField.options.map((o) => o.value), ['fake-model-alpha', 'fake-model-beta'])
-  assert.ok(modelField.note.includes('服务端权威'))
-  // 缓存生效：第二次调用拿到同一份结果（面板频繁渲染不会反复打网络）。
-  const second = provider.settings.meta(okEnv)
-  assert.deepEqual(second.fields.find((f) => f.key === 'defaultModel').options.map((o) => o.value), ['fake-model-alpha', 'fake-model-beta'])
-
+  // ★ 关键：即使环境里有一个能探测出清单的 fixture CLI，meta() 也必须是空的 ——
+  //   它只读缓存，绝不 spawn（否则面板首屏又被拖慢）。
+  assert.deepEqual(modelField.options, [], 'meta 绝不自动探测：未拉取时下拉为空')
+  assert.deepEqual(modelField.refresh, { label: '拉取可用模型' })
+  assert.match(modelField.note, /拉取可用模型/)
+  assert.match(modelField.note, /尚未拉取/)
+  assert.equal(meta.fields.find((f) => f.key === 'binPath').allowCustom, true)
   resetModelsCache()
-  const badEnv = { CLAUDE_BIN: 'C:/definitely-not-here/claude.exe', USERPROFILE: '' }
-  const meta2 = provider.settings.meta(badEnv)
-  const f2 = meta2.fields.find((f) => f.key === 'defaultModel')
-  assert.deepEqual(f2.options, [], '探测失败 → 空下拉（绝不塞配置里的别名冒充可用清单）')
-  assert.match(f2.note, /未能获取服务端权威模型清单/)
-  assert.equal(meta2.fields.find((f) => f.key === 'binPath').allowCustom, true)
+})
+
+test('settings.refreshModels → meta：面板保存过 binPath 时（meta 只拿 env）也能看到拉取结果', async () => {
+  resetModelsCache()
+  const env = { CLAUDE_BIN: FIX, USERPROFILE: '' }
+  // keystone 渲染面板时只把 env 传给 meta()（拿不到分区里的 binPath），两个缓存键因此
+  // 必然不同 —— 拉取成功的清单必须仍然出现在下拉里，否则用户会觉得按钮没生效。
+  const r = await provider.settings.refreshModels({ binPath: 'C:/panel/does-not-exist/claude.exe' }, env)
+  assert.equal(r.ok, true, JSON.stringify(r))
+  const modelField = provider.settings.meta(env).fields.find((f) => f.key === 'defaultModel')
+  assert.deepEqual(modelField.options.map((o) => o.value), ['fake-model-alpha', 'fake-model-beta'])
+  resetModelsCache()
+})
+
+test('settings.refreshModels：成功 → ok:true + 权威 ids + 写回缓存（随后 meta 命中）', async () => {
+  resetModelsCache()
+  const env = { CLAUDE_BIN: FIX, USERPROFILE: '' }
+  const r = await provider.settings.refreshModels({}, env)
+  assert.equal(r.ok, true, JSON.stringify(r))
+  assert.deepEqual(r.ids, ['fake-model-alpha', 'fake-model-beta'])
+  assert.equal(r.source, 'account-live')
+  assert.equal(r.error, undefined)
+  // 写回缓存的效果：meta() 现在直接命中，不需要再探测。
+  const meta = provider.settings.meta(env)
+  const modelField = meta.fields.find((f) => f.key === 'defaultModel')
+  assert.deepEqual(modelField.options.map((o) => o.value), ['fake-model-alpha', 'fake-model-beta'])
+  assert.match(modelField.note, /个服务端权威可用模型/)
+  resetModelsCache()
+})
+
+test('settings.refreshModels：labels 只给配置里映射过的 id 加注（value 仍是纯 id）', async () => {
+  resetModelsCache()
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const home = mkdtempSync(join(tmpdir(), 'clb-claude-refresh-'))
+  mkdirSync(join(home, '.claude'), { recursive: true })
+  writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ env: { ANTHROPIC_DEFAULT_OPUS_MODEL: 'fake-model-alpha' } }), 'utf8')
+  try {
+    const r = await provider.settings.refreshModels({ binPath: '' }, { CLAUDE_BIN: FIX, USERPROFILE: home })
+    assert.equal(r.ok, true)
+    assert.deepEqual(r.ids, ['fake-model-alpha', 'fake-model-beta'])
+    assert.match(r.labels['fake-model-alpha'], /ANTHROPIC_DEFAULT_OPUS_MODEL/)
+    assert.equal(r.labels['fake-model-beta'], undefined)
+  } finally { rmSync(home, { recursive: true, force: true }); resetModelsCache() }
+})
+
+test('settings.refreshModels：探测失败 → ok:false + 空 ids + 可操作错误（绝不 ok:true 空清单）', async () => {
+  resetModelsCache()
+  const r = await provider.settings.refreshModels({ binPath: '' }, { CLAUDE_BIN: 'C:/definitely-not-here/claude.exe', USERPROFILE: '' })
+  assert.equal(r.ok, false)
+  assert.deepEqual(r.ids, [], '失败时 ids 必须为空数组（keystone 只认 ok && ids.length）')
+  assert.equal(r.source, 'account-live')
+  assert.match(r.error, /无法获取服务端权威模型清单/)
+  assert.match(r.error, /排查顺序/, '错误必须告诉用户下一步怎么做')
+  // 失败不得污染缓存：meta() 依旧空。
+  assert.deepEqual(provider.settings.meta({ CLAUDE_BIN: 'C:/definitely-not-here/claude.exe', USERPROFILE: '' }).fields.find((f) => f.key === 'defaultModel').options, [])
+  resetModelsCache()
+})
+
+test('settings.refreshModels：配置文件里的别名绝不冒充可用清单（端点回 400 无名录时）', async () => {
+  resetModelsCache()
+  const prev = process.env.FAKE_CLAUDE_MODE
+  process.env.FAKE_CLAUDE_MODE = 'probe-accepts'
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const home = mkdtempSync(join(tmpdir(), 'clb-claude-refresh-bad-'))
+  mkdirSync(join(home, '.claude'), { recursive: true })
+  writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ env: { ANTHROPIC_MODEL: 'looks-like-a-model' } }), 'utf8')
+  try {
+    const r = await provider.settings.refreshModels({}, { CLAUDE_BIN: FIX, USERPROFILE: home })
+    assert.equal(r.ok, false)
+    assert.deepEqual(r.ids, [])
+    assert.ok(!JSON.stringify(r).includes('looks-like-a-model'), '配置别名绝不能出现在「可用清单」里')
+    assert.match(r.error, /排查顺序/)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+    if (prev === undefined) delete process.env.FAKE_CLAUDE_MODE
+    else process.env.FAKE_CLAUDE_MODE = prev
+    resetModelsCache()
+  }
 })
 
 test('settings.diagnose：一行文本包含 bin/model 来源', () => {

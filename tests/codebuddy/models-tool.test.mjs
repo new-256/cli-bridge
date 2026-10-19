@@ -13,7 +13,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import defineProvider from '../../providers/codebuddy.mjs'
-import { parseHelpModels, parseAccountModels } from '../../providers/codebuddy-catalog.mjs'
+import { parseAccountModels } from '../../providers/codebuddy-catalog.mjs'
+import { parseHelpModels } from '../../providers/codebuddy-models-source.mjs'
 
 const FIX = (f) => fileURLToPath(new URL('./fixtures/' + f, import.meta.url))
 

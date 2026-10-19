@@ -285,10 +285,9 @@ test('settings.normalize：bogus→默认、别名清洗、trim、secret 保留�
   assert.equal(p.settings.normalize({ preferredBackend: 'nope' }).preferredBackend, 'codebuddy')
 })
 
-test('settings.meta：4 字段形态 + defaultModel 选项来自 CLI 实时名册', () => {
-  // 面板下拉现在是**实时**取自 CLI（`--help` 的 "Currently supported:"），不再读磁盘
-  // 静态描述文件 —— 静态表实测落后（16 项 vs CLI 19 项，且 2 个 id 已改名）。
-  // 用夹具 CLI 保证测试密闭、与机器上装没装 codebuddy 无关。
+test('settings.meta：4 字段形态 + defaultModel 带「拉取可用模型」按钮标记', () => {
+  // 契约 §3.2：面板**不再自动探测**（避免首屏被 spawn 拖慢、也避免探不到时下拉空着
+  // 分不清"没模型"与"没拉到"）。meta() 只读缓存；探测由用户点按钮触发 refreshModels。
   const p = defineProvider({
     env: { CODEBUDDY_BIN: fileURLToPath(new URL('./fixtures/fake-cb-help.mjs', import.meta.url)) },
     process
@@ -296,16 +295,59 @@ test('settings.meta：4 字段形态 + defaultModel 选项来自 CLI 实时名�
   const m = p.settings.meta()
   assert.equal(m.titleSuffix, 'CodeBuddy')
   assert.deepEqual(m.fields.map((f) => f.key), ['preferredBackend', 'defaultModel', 'codebuddyEnToken', 'endpointOverride'])
-  assert.equal(m.fields[1].type, 'select')
-  assert.equal(m.fields[1].allowCustom, true)
-  const values = m.fields[1].options.map((o) => o.value)
-  assert.ok(values.length > 0, 'live roster must populate the dropdown')
-  assert.ok(values.includes('hy3') && values.includes('hy4-preview'))
-  // 折行还原与静默过期 id 的两条硬约束（本轮修的真实缺陷）
-  assert.ok(values.includes('minimax-m3-pay'), 'wrapped id reassembled')
-  assert.ok(values.includes('kimi-k3-2'), 'renamed id from live roster')
-  assert.ok(!values.includes('minimax-m3'), 'stale static id must not leak in')
-  assert.ok(!values.includes('kimi-k3-1'), 'stale static id must not leak in')
+  const dm = m.fields[1]
+  assert.equal(dm.type, 'select')
+  assert.equal(dm.allowCustom, true)
+  // 关键：meta() 绝不主动探测 —— 未预热缓存时必须为空（不是"探测到 0 个"）
+  assert.deepEqual(dm.options, [], 'meta() must NOT probe on its own (contract §3.2)')
+  // 但必须声明刷新入口，否则用户没有任何办法拿到清单
+  assert.equal(typeof dm.refresh, 'object')
+  assert.ok(String(dm.refresh.label).length > 0, 'refresh.label must be user-visible')
+  // note 必须解释"为什么空"和"该怎么办"
+  assert.match(dm.note, /拉取/)
+})
+
+test('settings.refreshModels：成功时回填缓存，随后 meta() 能读到（同源）', async () => {
+  // 用夹具 CLI（它会回吐账号清单），验证「点按钮 → 拿到 ids → meta 显示」整条闭环。
+  const p = defineProvider({
+    env: { CODEBUDDY_BIN: fileURLToPath(new URL('./fixtures/fake-cb-help.mjs', import.meta.url)) },
+    process,
+    settings: { preferredBackend: 'codebuddy' }
+  })
+  const r = await p.settings.refreshModels({ preferredBackend: 'codebuddy' }, process.env)
+  assert.equal(r.ok, true, String(r.error || ''))
+  assert.equal(r.source, 'account-live')
+  assert.ok(Array.isArray(r.ids) && r.ids.length > 0, 'ids must be non-empty on success')
+  // 折行还原与已废 id 不泄漏（本轮修过的真实缺陷）
+  assert.ok(r.ids.includes('minimax-m3-pay'), 'wrapped id reassembled')
+  assert.ok(r.ids.includes('kimi-k3-2'), 'renamed id present')
+  assert.ok(!r.ids.includes('minimax-m3'), 'stale id must not leak in')
+  assert.ok(!r.ids.includes('kimi-k3-1'), 'stale id must not leak in')
+  // 回填后 meta() 应当能看到同一份清单（面同源）
+  const dm = p.settings.meta().fields.find((f) => f.key === 'defaultModel')
+  assert.equal(dm.options.length, r.ids.length, 'meta() must read the cache written by refreshModels')
+})
+
+test('settings.refreshModels：拿不到清单 → ok:false + 可操作错误（禁止静默空）', async () => {
+  // 必须完全隔离：探测会按 CODEBUDDY_BIN → APPDATA\npm\codebuddy* → PATH 里的 codebuddy
+  // 依次尝试候选，若只把 CODEBUDDY_BIN 指到坏夹具而放过 PATH，就会回落到本机**真实**
+  // CLI 并成功（实测踩到：测试以为在测失败路径，其实打通了真 CLI）。
+  // 所以这里把三条候选路径全部打断：APPDATA 指向不存在、PATH 置空。
+  const p = defineProvider({
+    env: {
+      CODEBUDDY_BIN: fileURLToPath(new URL('./fixtures/fake-cb-noroster.mjs', import.meta.url)),
+      APPDATA: 'X:\\__no_such_appdata__',
+      USERPROFILE: 'X:\\__no_such_home__',
+      PATH: ''
+    },
+    process
+  })
+  const r = await p.settings.refreshModels({ preferredBackend: 'codebuddy' }, { CODEBUDDY_BIN: '', APPDATA: 'X:\\__no_such_appdata__', PATH: '' })
+  assert.equal(r.ok, false, 'must fail loudly, never {ok:true, ids:[]}')
+  assert.deepEqual(r.ids, [])
+  assert.equal(typeof r.error, 'string')
+  assert.ok(r.error.length > 20, 'error must be actionable')
+  assert.match(r.error, /登录|token|端点|CLI|获取/i)
 })
 
 test('settings.diagnose：默认后端 + EN 恒附一行；token 缺失指引进输出', () => {

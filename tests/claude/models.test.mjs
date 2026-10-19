@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 
 import {
   PROBE_MODEL, parseSupportedModels, extractProbeIds, readConfiguredModels, probeArgv,
-  probeSupportedModels, probeSupportedModelsSync, listAccountModels, resetModelsCache, MODELS_TTL_MS
+  probeSupportedModels, listAccountModels, resetModelsCache, readCachedModels, modelsCacheKey, MODELS_TTL_MS
 } from '../../providers/claude-models.mjs'
 
 const FIX = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url))
@@ -112,10 +112,40 @@ test('probeSupportedModels：可执行文件不存在 → ok:false（不是空�
   assert.match(r.error, /CLAUDE_BIN|设置面板|已尝试探测/)
 })
 
-test('probeSupportedModelsSync：面板用的同步探测同样解析 400 报文', () => {
-  const r = probeSupportedModelsSync({ CLAUDE_BIN: FIX }, {})
-  assert.equal(r.ok, true)
+test('probeSupportedModels：首个候选 spawn 失败时继续试下一个（error+close 双触发不得吃掉候选）', async () => {
+  // 回归钉子：spawn 失败会同时触发 'error' 与 'close'，两个回调各推进一次候选指针
+  // 就会把后面那个**能跑**的候选整个跳过 —— 表现为「binPath 填错 → 明明有 CLAUDE_BIN 也失败」。
+  const r = await probeSupportedModels({ CLAUDE_BIN: FIX }, { binPath: 'C:/nope/dead-claude.mjs' })
+  assert.equal(r.ok, true, JSON.stringify(r))
+  assert.equal(r.exe, FIX)
   assert.deepEqual(r.ids, ['fake-model-alpha', 'fake-model-beta'])
+})
+
+test('readCachedModels：面板用的「纯读缓存」——没拉过 = null，拉过才命中，且不做任何探测', async () => {
+  resetModelsCache()
+  const env = { CLAUDE_BIN: FIX, USERPROFILE: '' }
+  // ★ 这是「meta 不自动探测」的结构性保证：CLI 明明可探测，但缓存空 → 只返回 null，
+  //   调用方（settings.meta）因此拿到空下拉，而不是被同步探测拖慢。
+  assert.equal(readCachedModels(env, {}), null)
+  const got = await listAccountModels(env, {})
+  assert.equal(got.ok, true)
+  const hit = readCachedModels(env, {})
+  assert.deepEqual(hit.ids, ['fake-model-alpha', 'fake-model-beta'])
+  assert.equal(hit.mode, 'account-live')
+  assert.ok(hit.ageMs >= 0 && Number.isFinite(hit.ageMs))
+  // 缓存键跟着可执行文件集合走（工具路径据此重探）；但面板读缓存允许跨键兜底 ——
+  // 清单由 claude 自己 settings.json 的端点裁决，与走哪个候选 exe 无关（见函数注释）。
+  assert.notEqual(modelsCacheKey(env, ''), modelsCacheKey({ CLAUDE_BIN: 'C:/nope/claude.exe' }, ''))
+  assert.deepEqual(
+    readCachedModels({ CLAUDE_BIN: 'C:/nope/claude.exe', USERPROFILE: '' }, {}).ids,
+    ['fake-model-alpha', 'fake-model-beta']
+  )
+  // 返回的是副本：调用方改它不得污染缓存。
+  hit.ids.push('injected')
+  assert.deepEqual(readCachedModels(env, {}).ids, ['fake-model-alpha', 'fake-model-beta'])
+  // 整个缓存为空时仍然是 null（绝不凭空造清单）。
+  resetModelsCache()
+  assert.equal(readCachedModels(env, {}), null)
 })
 
 test('listAccountModels：成功时 models 来自服务端，configuredAs 只是标注', async () => {

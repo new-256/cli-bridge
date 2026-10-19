@@ -13,8 +13,13 @@
 //   ~/.claude/settings.json 的 env.ANTHROPIC_DEFAULT_*_MODEL 只是「别名映射」，
 //   不是服务端可用全集 —— 红线：绝不把它冒充成可用清单，也绝不静默返回空数组。
 //
-// 落盘/缓存：面板（settings.meta）是同步回调，必须 spawnSync；探测一次约 3-5s，
-// 故结果进 5 分钟缓存（与 codebuddy catalog 同策略），避免每次渲染都打网络。
+// 缓存与「谁探测」（契约 §3.2 手动拉取）：
+//   • settings.meta() 是同步回调，且**不再自动探测** —— 它只调 readCachedModels() 读这里的
+//     缓存（纯读、不 spawn、不联网）；没命中就留空，由 note 提示用户点「拉取可用模型」。
+//   • 探测只有一条路：settings.refreshModels() → 异步 probeSupportedModels()（用户显式触发）。
+//     成功后经 cachedModels() 写回同一个缓存，下次 meta() 直接命中 —— 面板首屏不再被拖慢。
+//   • 5 分钟 TTL 只约束**工具调用**（claude_models 的重复调用）；面板展示的是「上次拉取到的
+//     权威清单」，过期也照旧展示，但 note 会标注拉取时间（宁可显式标旧，也不让下拉莫名清空）。
 
 import { claudeExeCandidates, claudeProbeCandidates, splitExeSpec, quoteShellArg } from './claude-exe.mjs'
 
@@ -22,11 +27,11 @@ import { claudeExeCandidates, claudeProbeCandidates, splitExeSpec, quoteShellArg
 export const PROBE_MODEL = '__clb_probe_invalid__'
 export const MODELS_TTL_MS = 5 * 60 * 1000
 
-// 探测结果缓存：key（后端/端点标识） → { at, ids }
+// 探测结果缓存：key（后端/端点标识） → { at, value }
 const modelsCache = new Map()
 
 /** 清空探测缓存（测试与「模型变更后刷新」用）。 */
-export function resetModelsCache() { modelsCache.clear(); syncModelsCache.clear() }
+export function resetModelsCache() { modelsCache.clear() }
 
 // 缓存键 = 候选可执行文件集合（同一台机器可能切换 CLAUDE_BIN / 面板路径，键必须跟着变，
 // 否则会把「上一个 exe 的探测结果」错配给新 exe）。
@@ -35,8 +40,18 @@ function candidateKey(env, binPath) {
   return list.length ? list.join('|') : 'claude'
 }
 
+/** 缓存的键（面板读缓存与工具探测必须用同一把键，否则写进去读不出来）。 */
+export function modelsCacheKey(env, binPath) {
+  return 'claude:' + candidateKey(env, binPath)
+}
+
+/** 缓存里只可能存「成功的权威清单」；失败绝不入缓存（否则会把坏状态固化）。 */
+function isUsableProbe(v) {
+  return !!(v && v.ok === true && Array.isArray(v.ids) && v.ids.length)
+}
+
 /**
- * 缓存包装：TTL 内直接返回上次成功结果；失败不写缓存（下次仍然重试，绝不把失败固化）。
+ * 缓存包装（异步工具路径）：TTL 内直接返回上次成功结果；失败不写缓存。
  * @param {string} key
  * @param {() => Promise<object>|object} load
  * @param {number} [nowMs]
@@ -46,9 +61,45 @@ export function cachedModels(key, load, nowMs) {
   const hit = modelsCache.get(key)
   if (hit && at - hit.at < MODELS_TTL_MS) return hit.value
   return Promise.resolve().then(load).then((v) => {
-    if (v && v.ok && Array.isArray(v.ids) && v.ids.length) modelsCache.set(key, { at, value: v })
+    if (isUsableProbe(v)) modelsCache.set(key, { at, value: v })
     return v
   })
+}
+
+/**
+ * 只读缓存（settings.meta 专用）：纯读、不 spawn、不联网。
+ * 与 cachedModels 的区别：这里**不受 TTL 限制** —— 面板展示的是「上次真正拉取到的那份
+ * 服务端清单」，附 ageMs 让 note 如实标注新旧；空/过期与否都不该凭空清空用户看到的下拉。
+ *
+ * 为什么要「精确键未命中 → 取最近一次成功结果」：keystone 渲染面板时只把 env 传给
+ * meta()，**拿不到面板里保存的 binPath**（settingsView 里 createProvider 只带 env），
+ * 而缓存键含候选 exe 集合 → 用户一旦填过 binPath，精确键必然错开，下拉会在拉取成功后
+ * 仍然空着（看起来像按钮没起作用）。这不算降级：清单是 claude 自己 settings.json 里
+ * 端点+凭据裁决的，与走哪个候选 exe 无关（exe 只决定探测能否跑起来），且 note 会带上
+ * 「N 分钟前拉取 / 源 account-live」，用户看到的是真实的探测结果与真实的年龄。
+ * @param {object} env
+ * @param {{binPath?: string, nowMs?: number}} [opts]
+ * @returns {{ids: string[], mode: string, exe: (string|null), at: number, ageMs: number}|null}
+ */
+export function readCachedModels(env, opts) {
+  const o = opts || {}
+  const at = Number(o.nowMs) || Date.now()
+  const exact = modelsCache.get(modelsCacheKey(env, o.binPath))
+  let hit = isUsableProbe(exact && exact.value) ? exact : null
+  if (!hit) {
+    for (const entry of modelsCache.values()) {
+      if (!isUsableProbe(entry.value)) continue
+      if (!hit || entry.at > hit.at) hit = entry
+    }
+  }
+  if (!hit) return null
+  return {
+    ids: hit.value.ids.slice(),
+    mode: hit.value.mode || 'account-live',
+    exe: hit.value.exe || null,
+    at: hit.at,
+    ageMs: Math.max(0, at - hit.at)
+  }
 }
 
 /**
@@ -171,68 +222,8 @@ function probeFailureText(reasons, tried) {
 }
 
 /**
- * 同步探测（供 settings.meta 面板下拉；无 spawnSync 能力 → 明确 ok:false）。
- * @param {object} env
- * @param {{binPath?: string, timeoutMs?: number}} [opts]
- * @returns {{ok: boolean, ids: string[], mode: string, exe?: string, error?: string}}
- */
-export function probeSupportedModelsSync(env, opts) {
-  const o = opts || {}
-  const child = (function () { try { const p = globalThis.process; return (p && typeof p.getBuiltinModule === 'function') ? p.getBuiltinModule('node:child_process') : null } catch (x) { return null } })()
-  if (!child || typeof child.spawnSync !== 'function') {
-    return { ok: false, ids: [], mode: 'account-live', error: 'no spawnSync capability in this host form' }
-  }
-  const cands = claudeProbeCandidates(env, o.binPath)
-  const probeList = cands.length ? cands : ['claude']
-  const timeout = Math.max(3000, Math.min(Number(o.timeoutMs) || 12000, 30000))
-  const reasons = []
-  const proc = globalThis.process
-  for (const exe of probeList) {
-    const spec = splitExeSpec(exe)
-    const argv = spec.prefixArgs.concat(probeArgv())
-    const cmd = spec.shell ? [spec.cmd].concat(argv).map(quoteShellArg).join(' ') : spec.cmd
-    const r = child.spawnSync(cmd, spec.shell ? [] : argv, {
-      encoding: 'utf8', timeout, windowsHide: true, shell: !!spec.shell,
-      env: Object.assign({}, (proc && proc.env) || {}, {})
-    })
-    if (!r || r.error) { reasons.push(exe + ': ' + String((r && r.error && (r.error.code || r.error.message)) || 'spawn failed')); continue }
-    const got = extractProbeIds(r.stdout, r.stderr)
-    if (got.ids && got.ids.length) return { ok: true, ids: got.ids, mode: 'account-live', exe }
-    const head = String(got.errorText || '').replace(/\s+/g, ' ').trim().slice(0, 160)
-    reasons.push(exe + ': exit ' + r.status + '，未解析出可用模型清单' + (head ? ' — ' + head : ''))
-  }
-  return { ok: false, ids: [], mode: 'account-live', error: probeFailureText(reasons, probeList.length) }
-}
-
-// 同步探测缓存（面板每次渲染都会取，避免反复 spawnSync 打网络）。
-const syncModelsCache = new Map()
-// 失败结果的反向缓存 TTL：成功缓存 5 分钟；失败只缓存 60 秒。
-// 为什么必须有反向缓存：面板是同步回调，CLI 缺失/未登录时一次 spawnSync 可能阻塞数秒，
-// 每次渲染都重探会让设置面板卡顿。60 秒足够让用户装好 CLI/登录后立刻看到新结果，
-// 又不会把「当时读不到」长期固化成假象（状态照旧 ok:false + 可操作错误，语义不变）。
-const NEGATIVE_TTL_MS = 60 * 1000
-
-/**
- * 带缓存的同步探测（settings.meta 专用；面板是同步回调，只能 spawnSync）。
- * 成功/失败都进缓存（TTL 不同），失败语义保持不变：ok:false + 可操作错误。
- * @returns {{ok: boolean, ids: string[], mode: string, exe?: string, error?: string}}
- */
-export function probeSupportedModelsSyncCached(env, opts) {
-  const o = opts || {}
-  const key = 'sync:claude:' + candidateKey(env, o.binPath)
-  const at = Date.now()
-  const hit = syncModelsCache.get(key)
-  if (hit) {
-    const ttl = hit.value && hit.value.ok ? MODELS_TTL_MS : NEGATIVE_TTL_MS
-    if (at - hit.at < ttl) return hit.value
-  }
-  const v = probeSupportedModelsSync(env, o)
-  syncModelsCache.set(key, { at, value: v })
-  return v
-}
-
-/**
- * 异步探测（MCP / preset / dynamic 三形态共用）：起一次真实 CLI 调用，解析 400 报文。
+ * 异步探测（唯一探测实现：MCP / preset / dynamic 三形态 + 面板「拉取可用模型」共用）：
+ * 起一次真实 CLI 调用，解析 400 报文。
  * 铁律：只认探测结果；失败 = ok:false + 可操作错误，绝不回落到配置文件/静态表。
  * @param {object} env
  * @param {{binPath?: string, timeoutMs?: number}} [opts]
@@ -269,20 +260,33 @@ export function probeSupportedModels(env, opts) {
       let out = ''
       let err = ''
       const timer = setTimeout(() => { try { c.kill() } catch (e) { } }, Math.max(5000, Math.min(Number(o.timeoutMs) || 30000, 90000)))
+      // 一个候选只允许结算一次：spawn 失败时 'error' 与 'close' 会先后都触发，
+      // 两个回调各调一次 attempt() 会把后面的候选整个跳过（idx 多走一格）——
+      // 实测后果是「binPath 填错 → 明明 CLAUDE_BIN 里那个能跑，探测却直接失败」。
+      let settled = false
+      const nextCandidate = (reason) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        if (reason) reasons.push(reason)
+        attempt()
+      }
       c.stdout.on('data', (d) => { out += d; if (out.length > 400000) out = out.slice(-200000) })
       c.stderr.on('data', (d) => { err += d; if (err.length > 200000) err = err.slice(-100000) })
       c.on('error', (e) => {
-        clearTimeout(timer)
-        reasons.push(exe + ': ' + String((e && e.code) || (e && e.message) || 'spawn error'))
-        attempt()
+        nextCandidate(exe + ': ' + String((e && e.code) || (e && e.message) || 'spawn error'))
       })
       c.on('close', (code) => {
-        clearTimeout(timer)
+        if (settled) return
         const got = extractProbeIds(out, err)
-        if (got.ids && got.ids.length) { resolve({ ok: true, ids: got.ids, mode: 'account-live', exe }); return }
+        if (got.ids && got.ids.length) {
+          settled = true
+          clearTimeout(timer)
+          resolve({ ok: true, ids: got.ids, mode: 'account-live', exe })
+          return
+        }
         const head = String(got.errorText || '').replace(/\s+/g, ' ').trim().slice(0, 160)
-        reasons.push(exe + ': exit ' + code + '，未解析出可用模型清单' + (head ? ' — ' + head : ''))
-        attempt()
+        nextCandidate(exe + ': exit ' + code + '，未解析出可用模型清单' + (head ? ' — ' + head : ''))
       })
     }
     attempt()
@@ -298,7 +302,7 @@ export function probeSupportedModels(env, opts) {
  */
 export async function listAccountModels(env, opts) {
   const o = opts || {}
-  const key = 'claude:' + candidateKey(env, o.binPath)
+  const key = modelsCacheKey(env, o.binPath)
   if (o.refresh) modelsCache.delete(key)
   const probe = await cachedModels(key, () => probeSupportedModels(env, o))
   const cfg = readConfiguredModels(env)

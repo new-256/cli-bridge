@@ -2,9 +2,9 @@
 
 > 面向接手这个仓库/这台机器的下一个人（或下一个 Agent）。
 > 目标：**不读完所有历史也能安全改动、发布、排障**。历史事故与红线集中在 §5 与 §10。
-> 最近一次更新：2026-10-20（**0.2.9：第五、第六个 provider `claude` + `codex` 接入**；
-> 同时把重复三处的 `PRESET_DIRS` 收敛为单一来源、把 codebuddy 的"模型清单必须实时"
-> 纪律推广到两家新 provider）。此前 0.2.4 的 OpenCode 记录见 §13。
+> 最近一次更新：2026-10-20（**0.2.10：模型下拉改为「手动拉取」+ 修掉 0.2.9 里
+> opencode/mimo 的 dynamic 形态 ReferenceError（模板漏片文件占位）+ 源码 EOL 规范化为 LF**）。
+> 此前的 claude/codex 接入见 §14，OpenCode 见 §13。
 
 ---
 
@@ -21,13 +21,13 @@
 
 | 项 | 值 |
 | --- | --- |
-| 版本 | **0.2.9**（三处版本锁：`package.json` / `mcp/cli-bridge-mcp.mjs` 的 `SERVER_VERSION` / `CHANGELOG.md` 顶部；`verify.mjs` 机器比对） |
-| npm | `@luchenglong/cli-bridge@0.2.9`（`latest`；shasum `73d55ed7ca5e157a94f35cd86a109001891eceba`，98 files） |
-| GitHub | `new-256/cli-bridge`，`main` @ `31f8375`；tag `v0.2.1` … `v0.2.9` |
+| 版本 | **0.2.10**（三处版本锁：`package.json` / `mcp/cli-bridge-mcp.mjs` 的 `SERVER_VERSION` / `CHANGELOG.md` 顶部；`verify.mjs` 机器比对） |
+| npm | `@luchenglong/cli-bridge@0.2.10`（`latest`；shasum 以 `npm view` 为准，100+ files） |
+| GitHub | `new-256/cli-bridge`，`main` 见 `git log`；tag `v0.2.1` … `v0.2.10` |
 | 旧包 | 三个都已在 npm 标 **deprecated**（提示迁移到统一包）：`agy-first-bridge@1.7.1`、`codebuddy-first-bridge@1.6.2`、`mimo-first-bridge@1.2.9` |
 | 旧仓 | `new-256/agy-first-bridge`、`new-256/mimo-first-bridge`：README 顶部已加迁移横幅且 **archived（只读）**；`codebuddy-first-bridge` 在 GitHub 上不存在 |
-| 测试 | **569 tests / 568 pass / 0 fail / 1 skip**（既有跳过），四闸门 `npm run check` 全绿 |
-| 本机运行时 | DSH Desktop；`dsh-home/profiles/web` 以 **npm registry 标准依赖** + pnpm 快照部署（不用 `file:`）。⚠ 0.2.9 已发布但**运行时仍可能是旧版**，切版本要用户自己做 |
+| 测试 | **600 tests / 599 pass / 0 fail / 1 skip**（既有跳过），四闸门 `npm run check` 全绿 |
+| 本机运行时 | DSH Desktop；`dsh-home/profiles/web` 以 **npm registry 标准依赖** + pnpm 快照部署（不用 `file:`）。⚠ 已发布 ≠ 运行时已切，切版本要用户自己做 |
 
 **已知遗留 / 未处理项**（均有意为之，非故障）：
 - 家级补丁 `dsh-home\cordis.patch.yml` 里四条 MCP 行**仍是注释状态** —— 与旧版本交接文档
@@ -423,14 +423,57 @@ node tests/claude/helpers/verify-real-cli.mjs
 
 ---
 
+## 15. 模型下拉的「手动拉取」与两条新坑（0.2.10）
+
+### 15.1 机制（契约 §3.2）
+面板**不再自动探测**模型清单。原因：探测要起子进程/联网，面板是同步回调 —— 拖慢首屏；
+且探不到时下拉空着，用户分不清"这家没模型"与"没拉到"。
+
+现在：`meta()` 只读缓存 → 字段声明 `refresh: { label: '拉取可用模型' }` 即渲染按钮 →
+点击 `POST /cli-bridge/settings/models {provider}` → keystone 调该 provider 的
+`settings.refreshModels(settings, env)` → 返回 `{ok, ids, labels?, source, error?}` →
+前端把 `ids` 变成下拉选项（只更新展示态，选中后照常 POST 保存）。
+
+**铁律**：失败必须 `ok:false` + 可操作错误，端点恒返回 **HTTP 200**（业务失败不用 4xx，
+否则前端会当网络错误静默吞掉）。`source` 会显示给用户（`account-live` / `live` / …）。
+
+已实现：codebuddy / opencode / mimo / claude / codex（agy 无模型字段）。
+各家的探测来源不同，别混：codebuddy=无效模型触发 400 报文；claude=同机制（Anthropic 兼容端点）；
+codex=`GET {base_url}/models`；opencode=`opencode models`；mimo=`mimo models`。
+
+### 15.2 坑一：dynamic 模板的片文件占位（**0.2.9 真实事故**）
+把 `providers/<id>.mjs` 拆成片文件（`<id>-*.mjs`）后，**必须确认 `dynamic/<id>.host.template.mjs`
+里有片文件占位行**，否则 build 不会内联那些片 —— 生成物里符号只有引用没有定义，运行时
+`ReferenceError`（且**纯语法检查/new Function 求值都抓不到**，因为未定义标识符只在函数被
+调用时才炸）。0.2.9 就是这样让 opencode/mimo 的 dynamic 形态坏掉的。
+
+现在有永久防线：`tests/{opencode,mimo,claude,codex}/dynamic-template.test.mjs` 断言生成物里
+片文件符号的**定义数 = 1**（不是"出现过"）。加新片文件时请照抄这个断言。
+
+排查手法：`node tests/e2e/sandbox-smoke.mjs [id]` —— 求值 + 逐片符号定义数一把过。
+
+### 15.3 坑二：EOL 必须 LF（否则别的机器 build --check 必然 drift）
+`.gitattributes` 要求 `eol=lf`，但 **PowerShell 的 `Set-Content` / `[IO.File]::WriteAllLines`
+在 Windows 默认写 CRLF**。一旦源文件是 CRLF，build 按它拼出的生成物也是 CRLF，于是：
+- 本机 `build --check` 可能通过（源和产物一起是 CRLF）；
+- 但别人 clone（git 按 eol=lf 检出）+ 跑 `build --check` → **必然 drift**；
+- 严重时 git 会把生成物当二进制（`git ls-files --eol` 显示 `i/-text w/-text`）。
+
+用法：`node tests/e2e/normalize-eol.mjs`（干跑）/ `--apply`（规范化）。
+发版前建议：规范化 EOL → `node scripts/build.mjs` → `build --check` 必须 `up to date` →
+`git ls-files --eol providers/ dynamic/` 全部 `w/lf`。
+
+---
+
 ### 交接最小检查单
 
-- [ ] `npm run check` 全绿（569 测试）
+- [ ] `npm run check` 全绿（600 测试）
 - [ ] `node mcp/cli-bridge-mcp.mjs --check` 显示 `scheduling.source` 且版本与 package.json 一致
 - [ ] `GET $env:DSH_WEB_URL/cli-bridge/status` 返回**六家** + `scheduling`
 - [ ] 设置面板有 `总设置 | AGY | CB | MIMO | OPENCODE | CLAUDE | CODEX` 七类卡片；
-      各卡片的「默认模型」下拉显示的是**实时**清单（空的话说明该家没登录，见 §10）
+      有「默认模型」的那几张，点「拉取可用模型」能拿到清单（拿不到会显示具体原因）
 - [ ] 起一个 opencode 任务：灯亮 → 完成后 **60 秒内灭**（§6.1）
-- [ ] 知道红线在 §5、生效时机在 §7.2、排障在 §10、OpenCode 在 §13、claude/codex 在 §14
+- [ ] 知道红线在 §5、生效时机在 §7.2、排障在 §10、OpenCode 在 §13、claude/codex 在 §14、
+      手动拉取与两条新踩的坑在 §15
 - [ ] **`PRESET_DIRS` 只在 `providers/registry.mjs` 一处** —— 加 provider 别再在
       `build.mjs` / `preset-declarations.mjs` / `verify.mjs` 里各写一份（0.2.9 收敛的坑）

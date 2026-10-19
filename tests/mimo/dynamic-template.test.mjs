@@ -8,18 +8,35 @@ import { fileURLToPath } from 'node:url'
 const TPL = fileURLToPath(new URL('../../dynamic/mimo.host.template.mjs', import.meta.url))
 const OUT = fileURLToPath(new URL('../../dynamic/mimo.host.js', import.meta.url))
 
-test('模板含且仅含一行 __KIT__ / 一行 __PROVIDER__ / 一行 __SCHED__ 占位标记', () => {
+test('模板含且仅含一行 __KIT__ / __PROVIDER__ / __EXTRA__ / __SCHED__ 占位标记', () => {
   const src = readFileSync(TPL, 'utf8')
   const lines = src.split(/\r?\n/)
   const kit = lines.filter((l) => l.indexOf('/*__' + 'KIT__*/') >= 0)
   const prov = lines.filter((l) => l.indexOf('/*__' + 'PROVIDER__*/') >= 0)
+  const extra = lines.filter((l) => l.indexOf('/*__' + 'EXTRA__*/') >= 0)
   const sched = lines.filter((l) => l.indexOf('/*__' + 'SCHED__*/') >= 0)
   assert.equal(kit.length, 1, 'exactly one kit placeholder line')
   assert.equal(prov.length, 1, 'exactly one provider placeholder line')
+  // 0.2.9 回归：mimo 已拆出 providers/mimo-pure.mjs，模板漏掉 EXTRA 占位会让片文件
+  // 完全不进生成物 → dynamic 形态 apply() 时 ReferenceError（parseMimoJson 未定义）。
+  assert.equal(extra.length, 1, 'exactly one fragment placeholder line')
   assert.equal(sched.length, 1, 'exactly one sched placeholder line')
   assert.equal(kit[0].trim(), '/*__' + 'KIT__*/')
   assert.equal(prov[0].trim(), '/*__' + 'PROVIDER__*/')
+  assert.equal(extra[0].trim(), '/*__' + 'EXTRA__*/')
   assert.equal(sched[0].trim(), '/*__' + 'SCHED__*/')
+})
+
+test('生成物真的内联了 mimo-*.mjs 片文件（有定义，不只是被引用）', () => {
+  const out = readFileSync(OUT, 'utf8')
+  // 断言「定义数」而不是「出现次数」：0.2.9 的缺陷正是「出现 4 次、定义 0 次」，
+  // 只查 mentions 的断言全绿也挡不住。这条是这个缺陷的永久防线。
+  for (const sym of ['parseMimoJson', 'buildResult', 'parseMimoModels', 'fetchMimoModelsDetailed', 'cachedMimoModels']) {
+    const decls = out.split('function ' + sym + '(').length - 1
+    const mentions = out.split(sym).length - 1
+    assert.equal(decls, 1, sym + ' 必须在生成物里有且只有一处 function 定义（0 = 片文件没被内联）')
+    assert.ok(mentions > decls, sym + ' 应至少被引用一次')
+  }
 })
 
 test('模板自身禁模块语法与 import.meta（沙箱 new Function / build 全局替换纪律）', () => {

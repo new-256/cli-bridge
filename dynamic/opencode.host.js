@@ -2,6 +2,7 @@
 //
 // 构建（node scripts/build.mjs --only=opencode）把 core/bridge-kit.mjs 与
 // providers/opencode.mjs 分别内联进下方两个占位标记行（各占一行、行内仅此标记），
+// 第三个占位标记行负责内联 providers/opencode-*.mjs 片文件（可执行探测/模型解析），
 // 生成 dynamic/opencode.host.js。注意：标记字面量绝不能出现在本注释里 —— 构建做全局
 // 替换，注释中出现同样会被替换成正文代码而炸掉语法。
 // 沙箱纪律（旧仓 dynamic/host.js 头注 verbatim 精神）：
@@ -575,81 +576,25 @@ function createRunner(o) {
 // 红线（PROVIDER-CONTRACT.md §8 + §1）：
 //  - 本文件会被 build 内联进 dynamic 沙箱（new Function）：绝不出现 import.meta 字面量；
 //    process 只经 deps 注入或 typeof 守卫读取；宿主能力全部走 deps/attach(hostOpts)。
-//  - 只允许 import '../core/bridge-kit.mjs'。// import { createStatusEngine, createRunner, clampInt, isLimited } from '../core/bridge-kit.mjs'// import { candidateExePaths, EXE_BASENAMES } from './opencode-exe.mjs'
+//  - 只允许 import '../core/bridge-kit.mjs'（以及同目录的 opencode-exe.mjs 片文件，
+//    build 会把 providers/opencode-*.mjs 一并内联进同一沙箱作用域）。
+// 契约 §3.2：设置面板**不自动探测**模型列表 —— settings.meta() 只读上次手动拉取的
+// 缓存（缓存在 providers/opencode-exe.mjs），用户点「拉取可用模型」才走 refreshModels。
+// import { createStatusEngine, createRunner, clampInt, isLimited } from '../core/bridge-kit.mjs'
+// import { candidateExePaths, resolveExePrefix, parseModelList, sortModelsFreeFirst, fetchModelsDetailed, cachedModels, rememberModels } from './opencode-exe.mjs'
 
 function nowIso() { return new Date().toISOString() }
 
-// ── 可执行文件解析（env > 桌面版已知路径 > PATH）───────────────────────────────
-// 二进制名是 opencode-cli.exe（不是 opencode.exe）：V2 桌面版自带，且 V1/V2 不能并存
-// 安装（官方原话），故不做「opencode.exe 兜底」以免误命中另一个版本。
-// 桌面版各版本目录形如 ...\ai.opencode.desktop\cli\<ver>-<arch>\opencode-cli.exe。
-
-function schedBuiltin(name) {
-  try {
-    const proc = globalThis.process
-    return (proc && typeof proc.getBuiltinModule === 'function') ? proc.getBuiltinModule(name) : null
-  } catch (e) { return null }
+// 模型清单 → 下拉选项 / id→label 映射（免费模型带 [free] 后缀，与 opencode_models 展示一致）。
+function modelLabel(m) { return String(m.id) + ((m && m.free) ? '  [free]' : '') }
+function modelsToOptions(models) {
+  return (Array.isArray(models) ? models : []).map((m) => ({ value: String(m.id), label: modelLabel(m) }))
 }
 
-/**
- * 探测本机 opencode 可执行文件候选路径（优先桌面版 V2）。
- * 纯函数、零副作用；无 fs 能力时返回空数组 —— 由调用方退回 PATH 查找。
- * @param {object} env 环境变量（读 APPDATA / LOCALAPPDATA / PROGRAMFILES / HOME）
- */
-function resolveExePrefix(env, binPath) {
-  const e = env || {}
-  const bin = binPath || e.OPENCODE_BIN || e.OPENCODE_CLI || ''
-  if (bin) {
-    if (/\.(mjs|cjs|js)$/i.test(bin)) {
-      const proc = globalThis.process
-      const node = (proc && proc.execPath) ? proc.execPath : 'node'
-      return [node, bin]
-    }
-    return [String(bin)]
-  }
-  const found = candidateExePaths(e)
-  if (found.length) return [found[0]]
-  return [EXE_BASENAMES[0]]
-}
-
-// ── 模型列表（`opencode models`；纯文本每行 provider/model）─────────────────────
-// 同步版给 settings.meta（面板下拉）；异步版给 MCP 工具。解析宽容：只认
-// provider/model 形态的行，其余（表头/说明/空行）一律丢弃。
-const MODEL_LINE_RE = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.#@+-]+)$/
-
-function parseModelList(text) {
-  const out = []
-  const seen = Object.create(null)
-  for (const raw of String(text || '').split(/\r?\n/)) {
-    const ln = raw.trim()
-    if (!ln) continue
-    const m = ln.match(MODEL_LINE_RE)
-    if (!m) continue
-    const id = m[1] + '/' + m[2]
-    if (seen[id]) continue
-    seen[id] = true
-    out.push({ id: id, provider: m[1], name: m[2], free: /(-free$|free)/i.test(m[2]) })
-  }
-  return out
-}
-
-/**
- * 同步抓取模型列表（供设置面板下拉）。失败返回空数组 —— 下拉退化为自由输入，
- * 绝不因探测失败影响面板渲染。仅 spawnSync 可用时生效（宿主形态）。
- */
-function fetchModelsSync(env, binPath, timeoutMs) {
-  try {
-    const child = schedBuiltin('node:child_process')
-    if (!child || typeof child.spawnSync !== 'function') return []
-    const prefix = resolveExePrefix(env, binPath)
-    const r = child.spawnSync(prefix[0], prefix.slice(1).concat(['models']), {
-      encoding: 'utf8', timeout: clampInt(timeoutMs, 8000, 1000, 30000),
-      windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
-    })
-    if (!r || r.error || r.status !== 0) return []
-    return parseModelList(String(r.stdout || ''))
-  } catch (e) { return [] }
-}
+// 可执行文件探测 / 模型清单解析 / 手动拉取缓存全部在 providers/opencode-exe.mjs，
+// 本文件只消费（契约 §3.2：settings.meta 只读缓存，绝不在面板渲染时 spawn）。
+// 二进制名是 opencode-cli（V2 桌面版自带）：V1/V2 不能并存安装（官方原话），
+// 故不做 opencode.exe 兜底，以免误命中另一个版本。
 
 // ── 三工具 schema ────────────────────────────────────────────────────────────
 const RUN_PARAMS = {
@@ -985,8 +930,8 @@ function defineProvider (deps = {}) {
         list = list.filter((m) => String(m.provider).toLowerCase() === pv)
       }
       if (a.freeOnly) list = list.filter((m) => m.free)
-      // 免费模型优先展示（用户要求：优先用性能较好的免费模型），其次按字母序。
-      list.sort((x, y) => (x.free === y.free ? String(x.id).localeCompare(String(y.id)) : (x.free ? -1 : 1)))
+      // 免费模型优先展示（用户要求：优先用免费模型），与设置面板拉取列表同一排序。
+      list = sortModelsFreeFirst(list)
       return { ok: true, models: list, count: list.length }
     },
 
@@ -1005,9 +950,9 @@ function defineProvider (deps = {}) {
       meta: (env2) => {
         const e = env2 && typeof env2 === 'object' ? env2 : {}
         const s = currentSettings()
-        // 下拉选项：实时 `opencode models`（失败则退化为空 → 面板仍可自由输入）。
-        const models = fetchModelsSync(e, s.binPath, 8000)
-        const options = models.map((m) => ({ value: m.id, label: m.id + (m.free ? '  [free]' : '') }))
+        // 契约 §3.2：面板渲染**只读缓存**（命中就填 options，没命中留空），绝不 spawn。
+        // 探测改由用户点「拉取可用模型」显式触发（settings.refreshModels）。
+        const options = modelsToOptions(cachedModels())
         // 默认给「可用 exe 路径」的下拉候选（env 覆盖 > 桌面版探测）。
         const exeCandidates = []
         if (e.OPENCODE_BIN || e.OPENCODE_CLI) exeCandidates.push(String(e.OPENCODE_BIN || e.OPENCODE_CLI))
@@ -1024,10 +969,11 @@ function defineProvider (deps = {}) {
             {
               key: 'defaultModel', label: '默认模型', type: 'select', allowCustom: true,
               options: options,
+              refresh: { label: '拉取可用模型' },
               placeholder: '留空 = 由 opencode 自身配置决定',
               note: options.length
-                ? '共 ' + options.length + ' 个可用模型，免费模型已排在前面（[free]）。调用时传 model 可覆盖本项。'
-                : '未能读取模型列表（CLI 未安装/未登录/超时）—— 仍可手动输入 provider/model。'
+                ? '共 ' + options.length + ' 个可用模型（上次手动拉取的结果，免费模型已排在前面）。点「拉取可用模型」可重新拉取；调用时传 model 可覆盖本项。'
+                : '还没拉取过可用模型清单 —— 点右侧「拉取可用模型」按钮拉取（面板不再自动探测，避免拖慢首屏）。拉取失败会显示具体原因（CLI 未安装 / 未登录 / 超时）。仍可手动输入 provider/model。'
             },
             {
               key: 'defaultAgent', label: '默认 agent', type: 'select', allowCustom: true,
@@ -1037,6 +983,26 @@ function defineProvider (deps = {}) {
             }
           ]
         }
+      },
+      /**
+       * 契约 §3.2：手动拉取可用模型（面板按钮 → POST /cli-bridge/settings/models）。
+       * 复用 opencode-exe.mjs 的同步探测（包一层 async 即可 —— 该端点本身就是串行
+       * 请求，为它再写一套异步 spawn 只会多一份要维护的探测代码）。
+       * 成功写回缓存让随后的 meta() 命中；失败**必须** ok:false + 可操作原因，
+       * 绝不返回 { ok:true, ids:[] }，也绝不硬编码模型名冒充清单。
+       */
+      async refreshModels(settings, envArg) {
+        const s = settings && typeof settings === 'object' ? settings : {}
+        const e = envArg && typeof envArg === 'object' ? envArg : env
+        const binPath = (typeof s.binPath === 'string' && s.binPath.trim()) ? s.binPath.trim() : (currentSettings().binPath || '')
+        const r = fetchModelsDetailed(e, binPath, 15000)
+        const source = 'opencode-models'
+        if (!r.ok) return { ok: false, ids: [], source: source, error: r.error }
+        const models = sortModelsFreeFirst(r.models)
+        rememberModels(models)
+        const labels = Object.create(null)
+        for (const m of models) labels[m.id] = modelLabel(m)
+        return { ok: true, ids: models.map((m) => String(m.id)), labels: labels, source: source }
       },
       diagnose: (settings, env2) => {
         const s = settings && typeof settings === 'object' ? settings : {}
@@ -1144,6 +1110,196 @@ function defineProvider (deps = {}) {
     return runner
   }
   return descriptor
+}
+
+// ── inlined from providers/opencode-exe.mjs ──
+// providers/opencode-exe.mjs — opencode 可执行探测 / 模型清单解析 / 手动拉取缓存（无宿主依赖）。
+//
+// 从 providers/opencode.mjs 拆出，让两个文件都留在 600 行红线内（规则 §26）。
+// build 会把 providers/opencode-*.mjs 全部内联进 dynamic 沙箱同一作用域。
+// ⚠️ 注释里绝不写出口令标记字面量（build 全局替换会把注释劈开）。
+//
+// 本文件的三块职责（高内聚：全部围绕「怎么问本机 opencode」）：
+//   1. 可执行文件候选探测（桌面版已知路径）与 exe 前缀解析；
+//   2. `opencode models` 文本 → 结构化模型清单；
+//   3. 契约 §3.2 的手动拉取：带原因的同步探测 + 面板展示缓存（meta 只读缓存，绝不 spawn）。
+// import { clampInt } from '../core/bridge-kit.mjs'
+// Node 内建守卫（沙箱可能没有 fs/path；读不到返回 null，调用方退到保守值）。
+// 名字带 exe 前缀：本文件与 providers/opencode.mjs 会被内联进【同一个】沙箱脚本作用域。
+function exeBuiltin(name) {
+  try {
+    const proc = globalThis.process
+    return (proc && typeof proc.getBuiltinModule === 'function') ? proc.getBuiltinModule(name) : null
+  } catch (e) { return null }
+}
+
+// 二进制名是 opencode-cli.exe（V2 桌面版），不做 opencode.exe 兜底（V1/V2 不能并存）。
+const EXE_BASENAMES = ['opencode-cli', 'opencode']
+const DESKTOP_CLI_REL = ['ai.opencode.desktop', 'cli']
+// 桌面版目录形如 ...\ai.opencode.desktop\cli\<ver>-<arch>\opencode-cli.exe。
+// 沙箱内可能没有 fs —— 全部读取走 typeof 守卫，读不到就返回空数组（退回 PATH 查找）。
+
+function candidateExePaths(env) {
+  const e = env || {}
+  const out = []
+  const fs = exeBuiltin('node:fs')
+  const path = exeBuiltin('node:path')
+  if (!fs || typeof fs.readdirSync !== 'function' || !path || typeof path.join !== 'function') return out
+  const roots = []
+  for (const k of ['APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES']) if (e[k]) roots.push(String(e[k]))
+  const home = e.HOME || e.USERPROFILE
+  if (home && !roots.length) roots.push(String(home))
+  for (const root of roots) {
+    const cliDir = path.join.apply(path, [root].concat(DESKTOP_CLI_REL))
+    let versions = []
+    try { versions = fs.readdirSync(cliDir, { withFileTypes: true }) } catch (err) { continue }
+    // 版本目录按 semver 降序（新版本优先）；解析失败的排末尾。
+    const dirs = versions.filter((d) => d && d.isDirectory && d.isDirectory()).map((d) => d.name)
+    const key = (n) => {
+      const m = String(n).match(/(\d+)\.(\d+)\.(\d+)/)
+      return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [-1, -1, -1]
+    }
+    dirs.sort((a, b) => {
+      const ka = key(a), kb = key(b)
+      for (let i = 0; i < 3; i++) if (ka[i] !== kb[i]) return kb[i] - ka[i]
+      return 0
+    })
+    for (const d of dirs) {
+      for (const base of EXE_BASENAMES) {
+        const exe = path.join(cliDir, d, base + (String(e.OS || '').toLowerCase().startsWith('win') || e.APPDATA ? '.exe' : ''))
+        try { if (fs.existsSync(exe)) out.push(exe) } catch (err) { }
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * 解析本次调用使用的 exe 前缀（数组或字符串）。
+ * 优先级：binPath 设置 > env OPENCODE_BIN/OPENCODE_CLI > 桌面版探测 > PATH 名字。
+ * @param {object} env
+ * @param {string} [binPath] 设置面板里的显式路径（可空）
+ */
+function resolveExePrefix(env, binPath) {
+  const e = env || {}
+  const bin = binPath || e.OPENCODE_BIN || e.OPENCODE_CLI || ''
+  if (bin) {
+    if (/\.(mjs|cjs|js)$/i.test(bin)) {
+      const proc = globalThis.process
+      const node = (proc && proc.execPath) ? proc.execPath : 'node'
+      return [node, bin]
+    }
+    return [String(bin)]
+  }
+  const found = candidateExePaths(e)
+  if (found.length) return [found[0]]
+  return [EXE_BASENAMES[0]]
+}
+
+// ── 模型列表（`opencode models`；纯文本每行 provider/model）─────────────────────
+// 解析宽容：只认 provider/model 形态的行，其余（表头/说明/空行）一律丢弃。
+const MODEL_LINE_RE = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.#@+-]+)$/
+
+function parseModelList(text) {
+  const out = []
+  const seen = Object.create(null)
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const ln = raw.trim()
+    if (!ln) continue
+    const m = ln.match(MODEL_LINE_RE)
+    if (!m) continue
+    const id = m[1] + '/' + m[2]
+    if (seen[id]) continue
+    seen[id] = true
+    out.push({ id: id, provider: m[1], name: m[2], free: /(-free$|free)/i.test(m[2]) })
+  }
+  return out
+}
+
+/** 免费模型优先展示（用户要求：优先用性能较好的免费模型），其次按字母序。 */
+function sortModelsFreeFirst(list) {
+  return (Array.isArray(list) ? list.slice() : []).sort((x, y) => (
+    x.free === y.free ? String(x.id).localeCompare(String(y.id)) : (x.free ? -1 : 1)
+  ))
+}
+
+// 诊断文本压成一行（CLI 的 stderr/stdout 常带换行与表格）。
+function exeOneLine(text, max) {
+  const s = String(text == null ? '' : text).replace(/\s+/g, ' ').trim()
+  const cap = max || 200
+  return s.length > cap ? s.slice(0, cap) + '…' : s
+}
+
+/**
+ * 真正跑一次 `opencode models`，**带可操作失败原因**（契约 §3.2：失败必须 ok:false）。
+ *
+ * 为什么不复用「失败返回空数组」的旧写法：空数组无法区分「没装 CLI」「没登录」
+ * 「超时」「输出格式变了」四种结局，而面板/工具都必须能告诉用户下一步做什么。
+ * @returns {{ok:boolean, models:Array, exe:string, error?:string}}
+ */
+function fetchModelsDetailed(env, binPath, timeoutMs) {
+  const prefix = resolveExePrefix(env, binPath)
+  const exe = prefix.join(' ')
+  const child = exeBuiltin('node:child_process')
+  if (!child || typeof child.spawnSync !== 'function') {
+    return { ok: false, models: [], exe: exe, error: '当前宿主没有子进程能力（spawnSync 不可用）—— 请在有 Node 子进程能力的形态（DSH 主进程 / MCP 进程）里点「拉取可用模型」' }
+  }
+  let r = null
+  try {
+    r = child.spawnSync(prefix[0], prefix.slice(1).concat(['models']), {
+      encoding: 'utf8', timeout: clampInt(timeoutMs, 20000, 2000, 60000),
+      windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
+    })
+  } catch (e) {
+    return { ok: false, models: [], exe: exe, error: '启动 `' + exe + ' models` 失败：' + exeOneLine(e && e.message || e) }
+  }
+  if (!r) return { ok: false, models: [], exe: exe, error: '`' + exe + ' models` 没有任何返回（spawnSync 返回 null），请确认可执行文件路径' }
+  if (r.error) {
+    const code = String(r.error.code || '')
+    if (code === 'ENOENT') {
+      return { ok: false, models: [], exe: exe, error: '未找到 opencode 可执行文件（' + exe + '）—— 请安装 OpenCode（桌面版自带 CLI），或在设置里填写「opencode 可执行文件路径」，或设置 OPENCODE_BIN 环境变量' }
+    }
+    if (code === 'ETIMEDOUT' || code === 'ABORT_ERR') {
+      return { ok: false, models: [], exe: exe, error: '`' + exe + ' models` 超时 —— 网络或鉴权可能卡住：请先在终端手动跑一次 `opencode models` 确认，必要时执行 `opencode auth login`' }
+    }
+    return { ok: false, models: [], exe: exe, error: '`' + exe + ' models` 启动失败（' + (code || 'unknown') + '）：' + exeOneLine(r.error.message || r.error) }
+  }
+  const stdout = String(r.stdout || '')
+  const stderr = String(r.stderr || '')
+  const models = parseModelList(stdout)
+  if (models.length) return { ok: true, models: models, exe: exe }
+  if (r.status !== 0) {
+    return { ok: false, models: [], exe: exe, error: '`opencode models` 退出码 ' + r.status + '：' + exeOneLine(stderr || stdout) + ' —— 若提示未登录/无凭据，请先在终端执行 `opencode auth login`' }
+  }
+  return { ok: false, models: [], exe: exe, error: '`opencode models` 成功退出但没有解析到任何 provider/model 行' + (stdout ? '（输出开头：' + exeOneLine(stdout, 160) + '）' : '（输出为空）') + ' —— 请先在终端手动跑一次 `opencode models` 确认输出格式与登录状态' }
+}
+
+/** 兼容薄封装：失败返回空数组（旧语义，供不关心原因的调用方）。 */
+function fetchModelsSync(env, binPath, timeoutMs) {
+  const d = fetchModelsDetailed(env, binPath, timeoutMs)
+  return d.ok ? d.models : []
+}
+
+// ── 手动拉取缓存（契约 §3.2）─────────────────────────────────────────────────
+// `meta()` 每次面板渲染都会被调用：**只读本缓存，绝不 spawn**。缓存只存在进程内存里
+// （宿主进程重启即失效，不会把过时清单落盘成"配置"）；用户点按钮才刷新它。
+const MODEL_CACHE_TTL_MS = 6 * 60 * 60 * 1000
+const MODEL_CACHE = { at: 0, models: [] }
+
+/** 读缓存（未拉过 / 已过期 → 空数组，面板据此提示「点按钮拉取」）。 */
+function cachedModels(nowMs) {
+  const at = Number(nowMs) || Date.now()
+  if (!MODEL_CACHE.models.length) return []
+  if (at - MODEL_CACHE.at >= MODEL_CACHE_TTL_MS) return []
+  return MODEL_CACHE.models.slice()
+}
+
+/** 手动拉取成功后回填缓存；空清单绝不入缓存（否则下次渲染"有缓存但没内容"）。 */
+function rememberModels(models, nowMs) {
+  if (!Array.isArray(models) || !models.length) return false
+  MODEL_CACHE.models = models.slice()
+  MODEL_CACHE.at = Number(nowMs) || Date.now()
+  return true
 }
 
 // core/scheduling.mjs — CLI 调度（启用集合 + 调用优先级）单源纯逻辑。

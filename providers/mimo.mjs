@@ -11,13 +11,21 @@
 //  2. 模型由用户在设置里手动指定（settings.defaultModel，不写死默认值）；留空 =
 //     不传 --model，交给 mimo CLI 自身默认。可用模型以 `mimo models` 实测为准
 //     （xiaomi/mimo-v2.6-flash / -pro / -pro-ultraspeed 等）。
+//     契约 §3.2：面板**不自动探测**，meta() 只读上次手动拉取的缓存；用户点
+//     「拉取可用模型」才经 settings.refreshModels 跑一次 `mimo models`。
 //  3. 是否启用 mimo 由调度（_scheduling.enabled）控制；本描述符不含任何开关。
 //
 // 红线（PROVIDER-CONTRACT.md §8 + Lead 定案）：本文件会被 build 内联进 dynamic 沙箱
 // （new Function）—— 绝不出现 import.meta 字面量；process/fs/child_process 只经
-// globalThis.process.getBuiltinModule + typeof 守卫读取；只允许 import bridge-kit。
+// globalThis.process.getBuiltinModule + typeof 守卫读取；只允许 import bridge-kit
+// 与同目录的 mimo-pure.mjs 片文件（build 会把 providers/mimo-*.mjs 一并内联进同一沙箱作用域）。
 import { createStatusEngine, createRunner, clampInt, shortLabel, summarizeArgs } from '../core/bridge-kit.mjs'
-import { parseMimoJson, buildResult } from './mimo-pure.mjs'
+import {
+  parseMimoJson, buildResult, mimoCandidateExePaths, resolveMimoExePrefix, parseMimoModels,
+  fetchMimoModelsDetailed, fetchMimoModelsSync, cachedMimoModels, rememberMimoModels
+} from './mimo-pure.mjs'
+// 模型清单探测链路搬到片文件后仍保留旧 import 入口（ESM 具名导出；dynamic 内联时本行被 build 剥掉）。
+export { mimoCandidateExePaths, resolveMimoExePrefix, parseMimoModels, fetchMimoModelsSync, fetchMimoModelsDetailed }
 
 // ── 单后端归一（旧 mimo-core 双后端 verbatim 的收缩形态）───────────────────────
 // mimo-desktop 取消后不再有第二后端：backends() 恒 null；任何输入（含历史别名
@@ -30,97 +38,10 @@ const DEFAULT_TIMEOUT_SEC = 600
 // 触发「Identifier already declared」构建错误（scripts/build.mjs 文本拼接的固有约束）。
 const MIMO_LIMIT_RE = /rate.?limit|ratelimit|429|too many|quota|insufficient|credit|balance|exhausted|exceed|network|offline|ENETUNREACH|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|timeout|timed out|unavailable|503|502|500|401|403|unauthorized|invalid api|api key|connection|proxy|socket|tls|ssl|dns|free API service has ended|sign in|configure a third-party|网络|超时|限流|流量|受限|配额|金额|余额|额度|认证|连接|断开|登录|第三方/i
 
-// ── Node 内建探测（沙箱纪律：getBuiltinModule + typeof 守卫）───────────────────
-// 名字带 mimo 前缀：本文件会与 bridge-kit / core/scheduling.mjs【文本内联进同一个动态
-// 沙箱脚本作用域】，撞名即「Identifier already declared」构建错误。
-function mimoBuiltin(name) {
-  try {
-    const proc = globalThis.process
-    return (proc && typeof proc.getBuiltinModule === 'function') ? proc.getBuiltinModule(name) : null
-  } catch (e) { return null }
-}
+// ── 模型清单探测（可执行路径 / `mimo models` 解析 / 手动拉取缓存）──────────────
+// 全部在 providers/mimo-pure.mjs（本文件只消费）：契约 §3.2 要求面板渲染不 spawn，
+// 只有 settings.refreshModels 才会真正跑一次 `mimo models`，结果进内存缓存供 meta() 读。
 
-// ── 可执行文件解析（env MIMO_BIN/MIMO_CLI > 已知安装位置 > PATH 名字）───────────
-// MiMoCode CLI 官方便携安装目录：<USERPROFILE|HOME>/.mimocode/bin/mimo[.exe]。
-// 沙箱内可能没有 fs —— 全部读取走 typeof 守卫，读不到就返回空数组（退回 PATH 查找）。
-const MIMO_EXE_DIR = ['.mimocode', 'bin']
-
-/** 探测本机 mimo 可执行文件候选路径（官方便携安装位置）；无 fs 能力时返回空数组。 */
-export function mimoCandidateExePaths(env) {
-  const e = env || {}
-  const out = []
-  const fs = mimoBuiltin('node:fs')
-  if (!fs || typeof fs.existsSync !== 'function') return out
-  const path = mimoBuiltin('node:path')
-  const join = (path && typeof path.join === 'function') ? ((a, b) => path.join(a, b)) : ((a, b) => a + '/' + b)
-  for (const k of ['USERPROFILE', 'HOME']) {
-    if (!e[k]) continue
-    const dir = join(join(String(e[k]), MIMO_EXE_DIR[0]), MIMO_EXE_DIR[1])
-    for (const base of ['mimo.exe', 'mimo']) {
-      const exe = join(dir, base)
-      try { if (fs.existsSync(exe) && out.indexOf(exe) < 0) out.push(exe) } catch (err) { /* 探测失败静默跳过 */ }
-    }
-  }
-  return out
-}
-
-/**
- * 解析本次调用使用的 exe 前缀（数组或字符串）。
- * 优先级：binPath（显式路径）> env MIMO_BIN/MIMO_CLI > 已知安装位置 > PATH 名字。
- */
-export function resolveMimoExePrefix(env, binPath) {
-  const e = env || {}
-  const bin = binPath || e.MIMO_BIN || e.MIMO_CLI || ''
-  if (bin) {
-    if (/\.(mjs|cjs|js)$/i.test(bin)) {
-      const proc = globalThis.process
-      return [(proc && proc.execPath) ? proc.execPath : 'node', bin]
-    }
-    return [String(bin)]
-  }
-  const found = mimoCandidateExePaths(e)
-  return found.length ? [found[0]] : ['mimo']
-}
-
-// ── 模型列表（`mimo models`；设置面板下拉用）───────────────────────────────────
-// 实测输出形如每行 `provider/model — window 1M, compacts at 900K`（分隔符是中文破折号
-// U+2014）。模型名自身含连字符（xiaomi/mimo-v2.6-pro-ultraspeed），所以只认「行首的
-// provider/model」，其后一律当描述文本；表头/说明/空行一律丢弃，绝不抛。
-const MIMO_MODEL_ID_RE = /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.@#+-]+)(?=$|[\s—–:|,])/
-
-/** 解析 `mimo models` 文本输出为 [{id, provider, name, note}]（去重、保序）。 */
-export function parseMimoModels(text) {
-  const out = []
-  const seen = Object.create(null)
-  for (const raw of String(text || '').split(/\r?\n/)) {
-    // 去掉列表记号（• * - 1. 等）与行首空白，避免把记号当 provider 名。
-    const ln = raw.replace(/^[^A-Za-z0-9]+/, '').trim()
-    if (!ln) continue
-    const m = ln.match(MIMO_MODEL_ID_RE)
-    if (!m) continue
-    const id = m[1]
-    if (seen[id]) continue
-    seen[id] = true
-    const slash = id.indexOf('/')
-    out.push({ id: id, provider: id.slice(0, slash), name: id.slice(slash + 1), note: ln.slice(id.length).replace(/^[\s—–:|,-]+/, '').trim() })
-  }
-  return out
-}
-
-/**
- * 同步抓取模型列表（供设置面板下拉）。失败返回空数组 —— 下拉退化为自由输入，
- * 绝不因探测失败影响面板渲染。仅 spawnSync 可用时生效（宿主形态）。
- */
-export function fetchMimoModelsSync(env, timeoutMs) {
-  try {
-    const child = mimoBuiltin('node:child_process')
-    if (!child || typeof child.spawnSync !== 'function') return []
-    const prefix = resolveMimoExePrefix(env)
-    const r = child.spawnSync(prefix[0], prefix.slice(1).concat(['models']), { encoding: 'utf8', timeout: clampInt(timeoutMs, 8000, 1000, 30000), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
-    if (!r || r.error || r.status !== 0) return []
-    return parseMimoModels(String(r.stdout || ''))
-  } catch (e) { return [] }
-}
 
 // ── 三工具 schema（旧 preset verbatim；desktop 专属入参已随之后端取消而删除）────
 const MODEL_DESC = 'provider/model 格式，如 xiaomi/mimo-v2.6-flash；留空用设置里的默认模型'
@@ -402,22 +323,36 @@ export default function defineProvider(deps = {}) {
       },
       meta(envArg) {
         const e = envArg && typeof envArg === 'object' ? envArg : env
-        // 下拉选项：实时 `mimo models`（失败则退化为空 → 面板仍可自由输入）。
-        let options = []
-        try {
-          options = fetchMimoModelsSync(e, 8000).map((m) => ({ value: m.id, label: m.id }))
-        } catch (err) { options = [] }
+        // 契约 §3.2：面板渲染**只读缓存**（命中就填 options，没命中留空），绝不 spawn。
+        // 探测改由用户点「拉取可用模型」显式触发（settings.refreshModels）。
+        const options = cachedMimoModels().map((m) => ({ value: m.id, label: m.id }))
         return {
           titleSuffix: 'MiMo',
           fields: [{
             key: 'defaultModel', label: '默认模型', type: 'select', allowCustom: true,
             options: options,
+            refresh: { label: '拉取可用模型' },
             placeholder: '留空 = 不传 --model（由 mimo CLI 自身默认决定）',
             note: options.length
-              ? '共 ' + options.length + ' 个可用模型（来自 `mimo models`）。mimo_run/mimo_continue 的 model 参数可单次覆盖。'
-              : '未能读取模型列表（mimo CLI 未安装/未登录/超时）—— 仍可手动输入 provider/model，如 xiaomi/mimo-v2.6-flash。'
+              ? '共 ' + options.length + ' 个可用模型（上次手动拉取的结果，来自 `mimo models`）。点「拉取可用模型」可重新拉取；mimo_run/mimo_continue 的 model 参数可单次覆盖。'
+              : '还没拉取过可用模型清单 —— 点右侧「拉取可用模型」按钮拉取（面板不再自动探测，避免拖慢首屏）。拉取失败会显示具体原因（mimo CLI 未安装 / 未登录 / 免费 API 已终止）。仍可手动输入 provider/model，如 xiaomi/mimo-v2.6-flash。'
           }]
         }
+      },
+      /**
+       * 契约 §3.2：手动拉取可用模型（面板按钮 → POST /cli-bridge/settings/models）。
+       * 复用 fetchMimoModelsDetailed（同步探测包一层 async）；成功写回缓存让 meta() 命中；
+       * 失败**必须** ok:false + 可操作原因，绝不返回 { ok:true, ids:[] } 或硬编码名称。
+       */
+      async refreshModels(settings, envArg) {
+        const e = envArg && typeof envArg === 'object' ? envArg : env
+        const r = fetchMimoModelsDetailed(e, 15000)
+        const source = 'mimo-models'
+        if (!r.ok) return { ok: false, ids: [], source: source, error: r.error }
+        rememberMimoModels(r.models)
+        const labels = Object.create(null)
+        for (const m of r.models) labels[m.id] = m.id
+        return { ok: true, ids: r.models.map((m) => String(m.id)), labels: labels, source: source }
       },
       // 同步一行诊断：当前模型 + exe 来源（env > 已知安装位置 > PATH）。
       diagnose(settings, envArg) {
@@ -511,6 +446,7 @@ export default function defineProvider(deps = {}) {
   // 直接调用；writePartition 需要调用方自行传入可用的 fs/path 模块。
   descriptor._internals = { MIMO_LIMIT_RE, parseMimoJson, buildResult,
     mimoCandidateExePaths, resolveMimoExePrefix, parseMimoModels, fetchMimoModelsSync,
+    fetchMimoModelsDetailed, cachedMimoModels, rememberMimoModels,
     currentSettings, liveSettings, writePartition
   }
   return descriptor

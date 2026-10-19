@@ -21,14 +21,27 @@
 //  - 模型清单只认服务端权威探测；拿不到 = ok:false + 可操作错误（绝不静默空数组/配置冒充）。
 import { createStatusEngine, createRunner, clampInt, isLimited } from '../core/bridge-kit.mjs'
 import { claudeExeCandidates, claudePathHint, resolveExePrefix, splitExeSpec, CLAUDE_BIN_ENV_VARS } from './claude-exe.mjs'
-import { PROBE_MODEL, parseSupportedModels, probeSupportedModels, probeSupportedModelsSyncCached, readConfiguredModels, listAccountModels, resetModelsCache } from './claude-models.mjs'
+import { PROBE_MODEL, parseSupportedModels, probeSupportedModels, readCachedModels, readConfiguredModels, listAccountModels, resetModelsCache } from './claude-models.mjs'
 // 单行 re-export（build 内联时整行剥离；多行形态风险见 build.mjs 的 stripModuleSyntax 注释）。
-export { claudeExeCandidates, claudePathHint, resolveExePrefix, splitExeSpec, PROBE_MODEL, parseSupportedModels, probeSupportedModels, readConfiguredModels, listAccountModels, resetModelsCache }
+export { claudeExeCandidates, claudePathHint, resolveExePrefix, splitExeSpec, PROBE_MODEL, parseSupportedModels, probeSupportedModels, readCachedModels, readConfiguredModels, listAccountModels, resetModelsCache }
 
 function nowIso() { return new Date().toISOString() }
 
 // 权限模式的用户可见取值（auto 由 DSH plan 状态决定；其余直通 CLI）。
 const MODE_ENUM = ['auto', 'plan', 'accept-edits', 'bypass']
+
+// 手动拉取（契约 §3.2）的探测时限与失败指引。
+// 失败文案必须「可操作」：面板只会把 error 原样显示给用户，没写下一步等于没帮上忙。
+const REFRESH_TIMEOUT_MS = 30000
+const REFRESH_HINT = '排查顺序：① 确认设置面板的「claude 可执行文件路径」或 CLAUDE_BIN 指向真实 claude（原生 .exe 优先）；② 确认 ~/.claude/settings.json 的 env 里 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN 指向可用端点（该面若未登录，先在终端跑一次 claude 完成登录）；③ 再点一次「拉取可用模型」。'
+
+/** 缓存年龄的短文案（面板 note 用；只描述事实，不假装新鲜）。 */
+function ageText(ms) {
+  const min = Math.floor(Math.max(0, Number(ms) || 0) / 60000)
+  if (min < 1) return '刚刚拉取'
+  if (min < 60) return min + ' 分钟前拉取'
+  return Math.floor(min / 60) + ' 小时前拉取'
+}
 
 // ── 三工具 schema ─────────────────────────────────────────────────────────────
 const RUN_PARAMS = {
@@ -404,11 +417,17 @@ export default function defineProvider(deps = {}) {
         }
         return out
       },
+      /**
+       * 设置面板元数据（契约 §3.2）：**只读缓存、绝不探测**。
+       * 面板是同步回调，而探测要起子进程打网络（3-5s）——放在这里会把首屏拖慢，且探不到时
+       * 用户无法区分「没模型」与「没拉到」。故探测改为用户点「拉取可用模型」→
+       * settings.refreshModels() 显式触发；成功后写回同一份缓存，这里下次渲染直接命中。
+       */
       meta: (env2) => {
         const e = env2 && typeof env2 === 'object' ? env2 : {}
         const s = currentSettings()
-        const probe = (function () { try { return probeSupportedModelsSyncCached(e, { binPath: s.binPath }) } catch (err) { return { ok: false, ids: [], error: String(err && err.message || err) } } })()
-        const options = (probe.ok ? probe.ids : []).map((id) => ({ value: id, label: id }))
+        const cached = readCachedModels(e, { binPath: s.binPath })
+        const options = (cached ? cached.ids : []).map((id) => ({ value: id, label: id }))
         const exeCandidates = claudeExeCandidates(e, '')
         return {
           titleSuffix: 'Claude Code',
@@ -422,10 +441,12 @@ export default function defineProvider(deps = {}) {
             {
               key: 'defaultModel', label: '默认模型', type: 'select', allowCustom: true,
               options,
+              // 面板据此渲染「手动拉取」按钮（契约 §3.2）；meta() 自身永不探测。
+              refresh: { label: '拉取可用模型' },
               placeholder: '留空 = 由 claude 自身配置（~/.claude/settings.json）决定',
               note: options.length
-                ? '共 ' + options.length + ' 个服务端权威可用模型（探测所得）。调用时传 model 可覆盖本项。'
-                : '未能获取服务端权威模型清单（探测失败：' + String(probe.error || 'unknown').slice(0, 140) + '）—— 下拉为空，但可手动输入模型名。配置里的 ANTHROPIC_*_MODEL 只是别名映射，不作为候选展示。'
+                ? '共 ' + options.length + ' 个服务端权威可用模型（' + ageText(cached.ageMs) + '，源：' + cached.mode + '）。点「拉取可用模型」重新获取；调用时传 model 可覆盖本项。'
+                : '还没拉取过（或上次没拉到）：点「拉取可用模型」向端点取权威清单；空表示尚未拉取 / 该面未登录。可直接手动输入模型名 —— 配置里的 ANTHROPIC_*_MODEL 只是别名映射，不作为候选展示。'
             },
             {
               key: 'maxBudgetUsd', label: '单次最大花费（美元）', type: 'text',
@@ -434,6 +455,38 @@ export default function defineProvider(deps = {}) {
             }
           ]
         }
+      },
+
+      /**
+       * 手动拉取（契约 §3.2）：面板「拉取可用模型」按钮 → keystone
+       * POST /cli-bridge/settings/models → 这里。这是本 provider 唯一的面板探测入口。
+       *
+       * 复用 listAccountModels（异步 probeSupportedModels + 配置诊断），不写第二套探测；
+       * 其成功路径已把权威清单写回 modelsCache，随后 meta() 直接命中（无需再探测）。
+       * 铁律：失败 = ok:false + 可操作错误 + 空 ids，绝不返回 {ok:true, ids:[]}；
+       * 也绝不把 settings.json 里的别名映射冒充成服务端可用全集。
+       */
+      async refreshModels(settings, env2) {
+        const e = (env2 && typeof env2 === 'object') ? env2 : env
+        const s = descriptor.settings.normalize(settings)
+        const got = await listAccountModels(e, {
+          binPath: s.binPath,
+          timeoutMs: REFRESH_TIMEOUT_MS,
+          refresh: true
+        })
+        if (!got.ok) {
+          return { ok: false, ids: [], source: 'account-live', error: String(got.error || 'probe failed') + ' ' + REFRESH_HINT }
+        }
+        const ids = (got.models || []).map((m) => m.id).filter(Boolean)
+        if (!ids.length) {
+          // 走到这里说明探测自称成功却没给出任何 id —— 那是 bug，不是「无模型」，
+          // 必须显式失败，绝不能让面板显示一个空清单当成功。
+          return { ok: false, ids: [], source: 'account-live', error: '探测声称成功但未返回任何模型 id（内部不一致）。' + REFRESH_HINT }
+        }
+        // labels 只给「配置里还映射着某个 ANTHROPIC_*_MODEL」的项加注（纯展示，value 仍是 id）。
+        const labels = {}
+        for (const m of got.models) if (m.configuredAs) labels[m.id] = m.id + '  [' + m.configuredAs + ']'
+        return { ok: true, ids, labels, source: 'account-live' }
       },
       diagnose: (settings, env2) => {
         const s = settings && typeof settings === 'object' ? settings : {}

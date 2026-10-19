@@ -5,7 +5,7 @@
 // 作用域，所以这里仍可引用 catalog 的函数（沙箱内天然可见）；ESM 形态走本文件的 import。
 // ⚠️ 注释里绝不写出口令标记字面量（build 全局替换会劈开注释 → 生成物语法崩）。
 
-import { currentPreferredBackend, probeAccountModels, fetchHelpModelsSync } from './codebuddy-catalog.mjs'
+import { currentPreferredBackend, probeAccountModels, fetchHelpModelsSync } from './codebuddy-models-source.mjs'
 
 // ── codebuddy_models 工具定义（搬自主文件；纯逻辑，依赖经 ctx 注入）────────────
 // ctx = { env, deps, resolveBackend, modelCatalogDetailed, getAccountCatalog }

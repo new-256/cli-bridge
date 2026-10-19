@@ -288,10 +288,14 @@ function codexRememberLive(url, payload) {
   CODEX_MODEL_CACHE.payload = payload
 }
 
-function codexFetchInit(token) {
+function codexFetchInit(token, signal) {
   const headers = { accept: 'application/json' }
   if (token) headers.authorization = 'Bearer ' + token
-  return { method: 'GET', headers }
+  const init = { method: 'GET', headers }
+  // 面板「拉取可用模型」是 HTTP 请求上的同步等待：端点卡住时必须有上界，
+  // 否则设置页会一直转圈（无 signal 能力的宿主就照旧直接请求）。
+  if (signal) init.signal = signal
+  return init
 }
 
 function codexDescribeFetchError(status, body) {
@@ -314,8 +318,15 @@ export async function codexLiveModels(env, opts) {
     return { ok: false, source: 'live', models: [], url: ep.url, error: 'no fetch capability in this host form, so the live model list from ' + ep.url + ' cannot be read. Use source="catalog" (config.toml model_catalog_json) or source="builtin" (~/.codex/models.json) explicitly — they are local and are NOT authoritative.' }
   }
   let res
-  try { res = await f(ep.url, codexFetchInit(ep.token)) } catch (e) {
-    return { ok: false, source: 'live', models: [], url: ep.url, error: 'GET ' + ep.url + ' failed: ' + String(e && e.message || e) + '. Check network/proxy, or set CODEX_BRIDGE_MODELS_URL to the provider catalogue endpoint.' }
+  // 取清单是设置面板的一次同步等待（点按钮 → HTTP → 这里）：必须有上界。
+  // 无 AbortController 的宿主退化为不带上界（照旧请求），不静默改变成功语义。
+  const timeoutMs = Math.max(2000, Math.min(Number(o.timeoutMs) || 20000, 60000))
+  const ctrl = (typeof AbortController === 'function') ? new AbortController() : null
+  const timer = ctrl ? setTimeout(() => { try { ctrl.abort() } catch (err) { } }, timeoutMs) : null
+  try { res = await f(ep.url, codexFetchInit(ep.token, ctrl ? ctrl.signal : null)) } catch (e) {
+    return { ok: false, source: 'live', models: [], url: ep.url, error: 'GET ' + ep.url + ' failed (timeout ' + timeoutMs + 'ms): ' + String(e && e.message || e) + '. Check network/proxy, or set CODEX_BRIDGE_MODELS_URL to the provider catalogue endpoint.' }
+  } finally {
+    if (timer) clearTimeout(timer)
   }
   let body = ''
   try { body = typeof res.text === 'function' ? await res.text() : JSON.stringify(res.json || {}) } catch (e) { body = '' }
@@ -336,74 +347,8 @@ export async function codexLiveModels(env, opts) {
   return payload
 }
 
-// 子进程探针脚本：spawnSync 里不能 await，所以让子进程自己 async fetch 再打印。
-// token/url 只经 env 传递（绝不进命令行，避免凭据出现在进程参数里被别的进程看到）。
-// 子进程只回吐原始 body，解析仍由上面的 parse 统一做（单一解析实现，避免漂移）。
-const CODEX_PROBE_SCRIPT = [
-  'const url = process.env.CODEX_BRIDGE_PROBE_URL',
-  'const token = process.env.CODEX_BRIDGE_PROBE_TOKEN || ""',
-  'const ms = Number(process.env.CODEX_BRIDGE_PROBE_TIMEOUT || 8000)',
-  'const headers = { accept: "application/json" }',
-  'if (token) headers.authorization = "Bearer " + token',
-  'const ctrl = new AbortController()',
-  'const timer = setTimeout(() => { try { ctrl.abort() } catch (e) {} }, ms)',
-  'fetch(url, { headers, signal: ctrl.signal })',
-  '  .then(async (r) => { const b = await r.text(); process.stdout.write(JSON.stringify({ status: r.status, body: b })) })',
-  '  .catch((e) => { process.stdout.write(JSON.stringify({ status: 0, error: String((e && e.message) || e) })) })',
-  '  .finally(() => clearTimeout(timer))'
-].join('\n')
-
-/**
- * A 层（同步）：设置面板是同步回调，而 HTTP 客户端没有同步 API —— 用一个 node 子进程
- * 跑上面的探针脚本，spawnSync 拿回 body。结果进 5 分钟缓存（面板反复渲染不至于反复起进程）。
- */
-export function codexLiveModelsSync(env, opts) {
-  const o = opts || {}
-  const ep = codexModelsEndpoint(env)
-  if (!ep.ok) return { ok: false, source: 'live', models: [], error: ep.error }
-  const cached = codexCachedLiveModels(env, o.nowMs)
-  if (cached) return cached
-  const proc = codexProcess()
-  const child = codexBuiltin('node:child_process')
-  if (!proc || !proc.execPath || !child || typeof child.spawnSync !== 'function') {
-    return { ok: false, source: 'live', models: [], url: ep.url, error: 'no spawnSync capability to read ' + ep.url + ' synchronously' }
-  }
-  const r = child.spawnSync(proc.execPath, ['-e', CODEX_PROBE_SCRIPT], {
-    encoding: 'utf8',
-    timeout: Math.max(2000, Math.min(Number(o.timeoutMs) || 9000, 30000)),
-    windowsHide: true,
-    maxBuffer: 64 * 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: Object.assign({}, proc.env, {
-      CODEX_BRIDGE_PROBE_URL: ep.url,
-      CODEX_BRIDGE_PROBE_TOKEN: ep.token,
-      CODEX_BRIDGE_PROBE_TIMEOUT: String(Math.max(2000, Math.min(Number(o.timeoutMs) || 9000, 30000)) - 500)
-    })
-  })
-  if (!r || r.error) {
-    return { ok: false, source: 'live', models: [], url: ep.url, error: 'probe spawn failed: ' + String((r && r.error && (r.error.code || r.error.message)) || 'unknown') }
-  }
-  let out = null
-  try { out = JSON.parse(String(r.stdout || '')) } catch (e) { out = null }
-  if (!out) {
-    return { ok: false, source: 'live', models: [], url: ep.url, error: 'probe produced no JSON (exit=' + r.status + '): ' + String(r.stderr || r.stdout || '').slice(0, 200) }
-  }
-  if (!out.status && out.error) return { ok: false, source: 'live', models: [], url: ep.url, error: 'GET ' + ep.url + ' failed: ' + String(out.error) }
-  if (out.status < 200 || out.status >= 300) {
-    return { ok: false, source: 'live', models: [], url: ep.url, error: 'GET ' + ep.url + ' → ' + codexDescribeFetchError(out.status, out.body) }
-  }
-  const parsed = codexParseModelsPayload(out.body, 'live')
-  if (!parsed.ok) return { ok: false, source: 'live', models: [], url: ep.url, error: ep.url + ': ' + parsed.error }
-  if (!parsed.models.length) {
-    return { ok: false, source: 'live', models: [], url: ep.url, error: ep.url + ' returned 0 usable models (payload items=' + parsed.total + '). Refusing to report an empty list as authoritative.' }
-  }
-  const payload = {
-    ok: true, source: 'live', models: parsed.models, count: parsed.models.length,
-    url: ep.url, baseUrl: ep.baseUrl, providerName: ep.providerName, fetchedAt: Date.now()
-  }
-  codexRememberLive(ep.url, payload)
-  return payload
-}
+// 子进程探针脚本已删除：面板不再自动探测（契约 §3.2 手动拉取）。live 清单只在
+// settings.refreshModels()（异步、用户点按钮）与时序工具 codex_models 里读取。
 
 /** B 层：config.toml 的 model_catalog_json（相对 CODEX_HOME）。 */
 export function codexCatalogModels(env) {
@@ -435,37 +380,26 @@ export function codexBuiltinModels(env) {
 }
 
 /**
- * 设置面板下拉的候选池。
- * 优先实时（缓存或同步探测）；实时拿不到时**明确标注**地退到本地目录，
- * 让用户至少有东西可选，同时 note 里说清「这不是服务端权威清单」。
+ * 面板下拉的候选池（契约 §3.2）：**纯读缓存**，绝不 spawnSync、绝不发请求、绝不碰本地目录。
+ * 探测由 settings.refreshModels() 显式触发（用户点「拉取可用模型」），成功后写回同一份
+ * CODEX_MODEL_CACHE，这里下次渲染直接命中 —— 面板首屏因此不会被网络拖慢。
+ *
+ * 为什么不再回落到 catalog/builtin：那两层是本地元数据，不是服务端可用清单；把它们填进
+ * 这个下拉等于让用户以为「服务端就这些」（0.2.6~0.2.9 反复踩的坑）。宁可空着并说清
+ * 「点按钮拉取」，也不展示可能已经过时的非权威列表 —— 需要本地目录请用 codex_models
+ * 的 source="catalog"/"builtin" 显式查询（那里逐项标注来源）。
  */
-export function codexModelOptions(env, opts) {
-  const o = opts || {}
-  const live = o.skipLive ? null : (codexCachedLiveModels(env) || codexLiveModelsSync(env, { timeoutMs: o.timeoutMs }))
-  if (live && live.ok && live.models.length) {
+export function codexCachedModelOptions(env) {
+  const live = codexCachedLiveModels(env)
+  if (!live || !live.ok || !Array.isArray(live.models) || !live.models.length) {
     return {
-      options: live.models.map((m) => ({ value: m.id, label: m.id + (m.free ? '  [free]' : '') + '  [实时]' })),
-      source: 'live', url: live.url, note: '实时清单来自 ' + live.url + '（' + live.count + ' 个，免费模型标 [free]）。'
-    }
-  }
-  const cat = codexCatalogModels(env)
-  if (cat.ok) {
-    return {
-      options: cat.models.map((m) => ({ value: m.id, label: m.id + '  [本地目录]' })),
-      source: 'catalog', file: cat.file,
-      note: '实时清单不可用（' + String((live && live.error) || '未探测') + '）。以下 ' + cat.count + ' 项来自 config.toml 的 model_catalog_json，仅代表 codex 本地目录，不是服务端权威清单。'
-    }
-  }
-  const builtin = codexBuiltinModels(env)
-  if (builtin.ok) {
-    return {
-      options: builtin.models.map((m) => ({ value: m.id, label: m.id + '  [内置定义]' })),
-      source: 'builtin', file: builtin.file,
-      note: '实时清单与本地目录都不可用（' + String((cat && cat.error) || '') + '）。以下来自 ~/.codex/models.json 内置定义，不是服务端权威清单。'
+      options: [], source: 'none', count: 0,
+      note: '还没拉取过（或上次没拉到）：点「拉取可用模型」向端点取权威清单；空表示尚未拉取 / 端点或 token 未配好。可直接手动输入模型 id。'
     }
   }
   return {
-    options: [], source: 'none',
-    note: '未能读取任何模型清单：' + String((live && live.error) || 'live unavailable') + '；可直接手动输入模型 id。'
+    options: live.models.map((m) => ({ value: m.id, label: m.id + (m.free ? '  [free]' : '') })),
+    source: 'live', count: live.count, url: live.url, fetchedAt: live.fetchedAt,
+    note: '上次拉取到 ' + live.count + ' 个模型（源：' + live.url + '，免费标 [free]）。点「拉取可用模型」重新获取。'
   }
 }

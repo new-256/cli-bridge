@@ -25,7 +25,7 @@
 import { createStatusEngine, createRunner, clampInt, isLimited, endpointHost } from '../core/bridge-kit.mjs'
 import {
   codexSetHost, codexResolveExePrefix, codexExeCandidates, codexReadConfig,
-  codexModelsEndpoint, codexModelOptions, codexCachedLiveModels, codexLiveModels,
+  codexModelsEndpoint, codexCachedModelOptions, codexCachedLiveModels, codexLiveModels,
   codexCatalogModels, codexBuiltinModels, codexHomeDir
 } from './codex-cli.mjs'
 import { codexModelsTool } from './codex-models.mjs'
@@ -37,6 +37,11 @@ function nowIso() { return new Date().toISOString() }
 const SANDBOX_MODES = ['read-only', 'workspace-write', 'danger-full-access']
 const APPROVAL_POLICIES = ['untrusted', 'on-failure', 'on-request', 'never']
 const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh']
+
+// 手动拉取（契约 §3.2）：面板只把 error 原文显示给用户，所以失败文案必须自带下一步。
+// codex-cli 没有 models 子命令，live 清单只能走端点 HTTP —— 排查顺序就围绕端点/凭据写。
+const REFRESH_TIMEOUT_MS = 20000
+const REFRESH_HINT = '排查顺序：① 看 ~/.codex/config.toml 的 [model_providers.<当前 provider>] 里 base_url / experimental_bearer_token（或 auth.json 的 OPENAI_BASE_URL / OPENAI_API_KEY）是否指向可用端点；② 可用 CODEX_BRIDGE_MODELS_URL / CODEX_BRIDGE_MODELS_TOKEN 临时覆盖端点与凭据；③ 再点一次「拉取可用模型」（codex_models 默认 source=live 读的是同一份清单）。'
 
 // ── 三工具 schema ────────────────────────────────────────────────────────────
 const RUN_PARAMS = {
@@ -414,11 +419,12 @@ export default function defineProvider(deps = {}) {
           approvalPolicy: APPROVAL_POLICIES.indexOf(approval) >= 0 ? approval : ''
         }
       },
-      // 面板是同步回调：defaultModel 的候选走 codexModelOptions（实时清单优先，5 分钟
-      // 缓存；实时不可用时**降级但标注**为本地目录/内置定义，绝不假装是实时）。
+      // 面板是同步回调，且**不再自动探测**（契约 §3.2）：defaultModel 的候选只来自
+      // 已缓存的 live 清单（codexCachedModelOptions 纯读，不 spawnSync、不发请求）。
+      // 探测由用户点「拉取可用模型」→ settings.refreshModels() 显式触发。
       meta: (env2) => {
         const e = env2 && typeof env2 === 'object' ? env2 : env
-        const opts = codexModelOptions(e, { timeoutMs: 6000 })
+        const opts = codexCachedModelOptions(e)
         const exeCandidates = codexExeCandidates(e)
         return {
           titleSuffix: 'Codex',
@@ -432,6 +438,8 @@ export default function defineProvider(deps = {}) {
             {
               key: 'defaultModel', label: '默认模型', type: 'select', allowCustom: true,
               options: opts.options,
+              // 面板据此渲染「手动拉取」按钮（契约 §3.2）；meta() 自身永不探测。
+              refresh: { label: '拉取可用模型' },
               placeholder: '留空 = 由 ~/.codex/config.toml 的 model 决定',
               note: opts.note
             },
@@ -459,6 +467,39 @@ export default function defineProvider(deps = {}) {
           ]
         }
       },
+      /**
+       * 手动拉取（契约 §3.2）：面板「拉取可用模型」按钮 → keystone
+       * POST /cli-bridge/settings/models → 这里。这是本 provider 唯一的面板探测入口。
+       *
+       * 复用 codexLiveModels（工具面同一个实现：GET {base_url}/models + Bearer），不写第二套；
+       * 成功时它已把 payload 写回 CODEX_MODEL_CACHE，随后 meta() 直接命中。
+       * 铁律：失败 = ok:false + 可操作错误 + 空 ids；绝不返回 {ok:true, ids:[]}，
+       * 也绝不把 catalog/builtin（本地目录、非权威）混进这份「服务端可用清单」。
+       */
+      async refreshModels(settings, env2) {
+        const e = (env2 && typeof env2 === 'object') ? env2 : env
+        const res = await codexLiveModels(e, {
+          refresh: true,
+          fetch: deps.fetch,
+          timeoutMs: REFRESH_TIMEOUT_MS
+        })
+        if (!res.ok) {
+          return { ok: false, ids: [], source: 'live', error: String(res.error || 'live model list unavailable') + ' ' + REFRESH_HINT }
+        }
+        const ids = []
+        const labels = {}
+        for (const m of res.models || []) {
+          if (!m || !m.id || ids.indexOf(m.id) >= 0) continue
+          ids.push(m.id)
+          labels[m.id] = m.free ? m.id + '  [free]' : m.id
+        }
+        if (!ids.length) {
+          // 拿到 2xx 却没有任何可用 id：显式失败，绝不把空清单当成功（本项目 0.2.6~0.2.9 的坑）。
+          return { ok: false, ids: [], source: 'live', error: '端点 ' + String(res.url || '') + ' 返回 0 个可用模型 id（响应已解析但没有可用项）。' + REFRESH_HINT }
+        }
+        return { ok: true, ids, labels, source: 'live' }
+      },
+
       diagnose: (settings, env2) => {
         const s = settings && typeof settings === 'object' ? settings : {}
         const e = env2 && typeof env2 === 'object' ? env2 : env

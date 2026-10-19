@@ -2,6 +2,7 @@
 //
 // 构建（node scripts/build.mjs --only=opencode）把 core/bridge-kit.mjs 与
 // providers/opencode.mjs 分别内联进下方两个占位标记行（各占一行、行内仅此标记），
+// 第三个占位标记行负责内联 providers/opencode-*.mjs 片文件（可执行探测/模型解析），
 // 生成 dynamic/opencode.host.js。注意：标记字面量绝不能出现在本注释里 —— 构建做全局
 // 替换，注释中出现同样会被替换成正文代码而炸掉语法。
 // 沙箱纪律（旧仓 dynamic/host.js 头注 verbatim 精神）：
@@ -13,6 +14,7 @@
 //    推给家级灯；动态形态不宣告 mode（旧语义：普通模式灯仅在调用时临时显示）。
 /*__KIT__*/
 /*__PROVIDER__*/
+/*__EXTRA__*/
 /*__SCHED__*/
 
 return {

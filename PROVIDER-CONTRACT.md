@@ -134,12 +134,45 @@ meta(env) → {
     allowCustom?: boolean,       // select 允许自定义输入（defaultModel 就是它）
     placeholder?: string,
     note?: string,               // 字段下方说明
-    secret?: boolean             // 凭据字段：必须同时列入 secretKeys
+    secret?: boolean,            // 凭据字段：必须同时列入 secretKeys
+    refresh?: {                  // 可选：给 select 加「手动拉取」按钮（见 §3.2）
+      label?: string             //   按钮文案，缺省「拉取可用项」
+    }
   } ]
 }
 ```
 
 diagnose(settings, env) 返回一行文本（卡片底部「诊断」区）；无诊断给 ''。
+
+### 3.2 手动拉取（`refreshModels`）—— 面板不自动探测
+
+**背景**：模型可用列表只能问服务端/端点，而"问"要起子进程、可能联网、可能因为某个
+产品面没登录而失败。早期做法是在 `meta()` 里同步探针（`spawnSync` + 缓存），带来两个问题：
+① 面板首屏可能被拖慢；② 探不到时下拉空着，用户无法区分"没模型"与"没拉到"。
+
+**现在**：`meta()` **只读缓存、绝不主动探测**；探测改由用户点按钮显式触发。
+provider 若希望自己的某个 select 字段支持手动拉取，则：
+
+1. 在 `meta()` 的该字段上加 `refresh: { label: '拉取可用模型' }`；
+2. 实现 `settings.refreshModels(settings, env)`（**可选**，async）：
+
+```
+refreshModels(settings, env) → Promise<{
+  ok: boolean,
+  ids?: string[],        // 可用项 id（keystone 转成 options:[{value,label}]）
+  labels?: object,       // 可选：id → 展示文案
+  source?: string,       // 数据来源标注，面板会显示（如 'account-live' / 'live'）
+  error?: string         // ok:false 时必填且要可行动（告诉用户下一步怎么做）
+}>
+```
+
+**铁律**：探测失败必须 `ok:false` + 可操作错误，**绝不**返回 `{ok:true, ids:[]}`
+或把静态表冒充成权威清单（这是本项目反复踩过的坑，0.2.6~0.2.9 都在修它）。
+
+keystone 提供端点 `POST /cli-bridge/settings/models`（body `{ provider: '<id>' }`），
+固定返回 HTTP 200 + `{ ok, provider, options, source, error }` —— 用 `ok` 表达业务失败，
+不用 HTTP 状态码，以免前端把"没拉到"当成网络错误而静默。client.js 渲染按钮、处理 loading
+与错误展示，并把拿到的 options 合并进当前字段（不落盘，纯展示态；用户选中后照常走 POST 保存）。
 
 ### 3.1 调度区（顶层 `_scheduling`，非 provider 分区 —— 新增 provider 零改动接入）
 

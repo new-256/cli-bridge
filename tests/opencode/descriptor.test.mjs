@@ -2,8 +2,13 @@
 // flag 与事件形态以本机实测 opencode 1.19.0 `run --help` + 源码 emit 全集为准。
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import defineProvider, { candidateExePaths, resolveExePrefix, parseModelList } from '../../providers/opencode.mjs'
+
+const FIX = (f) => fileURLToPath(new URL('./fixtures/' + f, import.meta.url))
 
 const provider = defineProvider({ env: {} })
 
@@ -295,8 +300,11 @@ test('settings 分区：normalize 丢弃未知键，diagnose 反映 exe 来源�
   assert.match(provider.settings.diagnose({ defaultModel: 'opencode/big-pickle' }, {}), /model=opencode\/big-pickle/)
 })
 
-test('settings.meta：binPath/defaultModel/defaultAgent 均为可自定义下拉', () => {
-  const meta = provider.settings.meta({})
+test('settings.meta：三个字段均为可自定义下拉；模型下拉只读缓存（绝不探测）', () => {
+  // 契约 §3.2：META 不得 spawn —— 即便 OPENCODE_BIN 指向一个能输出模型清单的假 CLI，
+  // 未手动拉取时 options 也必须为空。本用例先于 refreshModels 用例声明（node:test
+  // 同文件顺序执行），保证断言在缓存为空时运行。
+  const meta = provider.settings.meta({ OPENCODE_BIN: FIX('fake-opencode-models.mjs') })
   const keys = meta.fields.map((f) => f.key)
   assert.deepEqual(keys, ['binPath', 'defaultModel', 'defaultAgent'])
   for (const f of meta.fields) {
@@ -304,8 +312,49 @@ test('settings.meta：binPath/defaultModel/defaultAgent 均为可自定义下拉
     assert.equal(f.allowCustom, true, f.key + ' must allow custom input')
     assert.ok(Array.isArray(f.options), f.key + ' options must be an array')
   }
-  // 模型选项失败时退化为自由输入，不抛异常（CLI 未安装/未登录场景下不能崩面板）。
+  const model = meta.fields.find((f) => f.key === 'defaultModel')
+  assert.deepEqual(model.options, [], 'meta() must not probe: cache empty before a manual pull')
+  assert.deepEqual(model.refresh, { label: '拉取可用模型' })
+  assert.match(model.note, /拉取可用模型/)
+  // CLI 未安装/未登录场景下也绝不崩面板。
   assert.doesNotThrow(() => provider.settings.meta({}))
+})
+
+// ── settings.refreshModels（契约 §3.2：用户点按钮才拉取）───────────────────────
+test('refreshModels：CLI 不存在 → ok:false + 可操作错误（绝不 ok:true / 空清单）', async () => {
+  const r = await provider.settings.refreshModels({ binPath: join(tmpdir(), 'definitely-not-opencode-xyz.exe') }, {})
+  assert.equal(r.ok, false)
+  assert.deepEqual(r.ids, [])
+  assert.equal(r.source, 'opencode-models')
+  assert.match(r.error, /未找到 opencode 可执行文件/)
+  // 错误必须可行动：装 CLI / 填 binPath / 设 OPENCODE_BIN。
+  assert.match(r.error, /安装 OpenCode|OPENCODE_BIN|opencode 可执行文件路径/)
+})
+
+test('refreshModels：CLI 跑通但没有模型行 → ok:false 且指引手动确认（不伪造清单）', async () => {
+  const r = await provider.settings.refreshModels({ binPath: FIX('fake-opencode.mjs') }, {})
+  assert.equal(r.ok, false)
+  assert.deepEqual(r.ids, [])
+  assert.match(r.error, /没有解析到任何 provider\/model 行/)
+})
+
+test('refreshModels：成功 → ids/labels/source 就位（免费优先），并写回缓存供 meta 命中', async () => {
+  const r = await provider.settings.refreshModels({ binPath: FIX('fake-opencode-models.mjs') }, {})
+  assert.equal(r.ok, true)
+  assert.equal(r.source, 'opencode-models')
+  const expected = ['opencode/beam-free', 'opencode/deepseek-v4.1-flash-free', 'opencode/gpt-5.5', 'opencode-go/longcat-2.5-preview-free']
+  assert.equal(r.ids.length, 4)
+  assert.deepEqual(r.ids.slice().sort(), expected.slice().sort())
+  // 免费模型排前面（用户要求：优先用免费模型）。
+  const freeIdx = r.ids.map((id, i) => (/-free$/.test(id) ? i : -1)).filter((i) => i >= 0)
+  const paidIdx = r.ids.map((id, i) => (/-free$/.test(id) ? -1 : i)).filter((i) => i >= 0)
+  assert.ok(Math.max.apply(null, freeIdx) < Math.min.apply(null, paidIdx), 'free models must sort before paid')
+  assert.match(r.labels['opencode/beam-free'], /\[free\]/)
+  assert.doesNotMatch(r.labels['opencode/gpt-5.5'], /\[free\]/)
+  // 缓存命中：随后的 meta() 直接给出选项（不再起进程）。
+  const model = provider.settings.meta({}).fields.find((f) => f.key === 'defaultModel')
+  assert.equal(model.options.length, 4)
+  assert.ok(model.options.some((o) => o.value === 'opencode/beam-free'))
 })
 
 test('failureHint：未安装 → 指引安装；无模型 → 指引 opencode models', () => {

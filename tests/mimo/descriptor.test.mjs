@@ -228,21 +228,48 @@ test('fetchMimoModelsSync：超时夹紧到 1000..30000 且非法入参不抛', 
   assert.doesNotThrow(() => fetchMimoModelsSync({}, -5))
 })
 
-test('settings.meta：defaultModel 是可自定义 select，探测失败不抛', () => {
-  // meta() 内部走 fetchMimoModelsSync —— CLI 不存在时 options 为空数组，
-  // 面板退化为自由输入（契约：探测失败绝不崩面板）。
-  const m = provider.settings.meta({ MIMO_BIN: join(tmpdir(), 'definitely-not-mimo-xyz.mjs') })
+// 契约 §3.2：settings.meta 只读缓存、绝不探测。同文件内 node:test 顺序执行，故
+// 「未拉取 → options 为空」必须排在下面的 refreshModels 用例之前（否则缓存已被填上）。
+test('settings.meta：只读缓存（未拉取时 options 为空），字段带 refresh 标记', () => {
+  // MIMO_BIN 指向一个能输出模型清单的假 CLI：meta() 仍然不得起进程（只认缓存）。
+  const m = provider.settings.meta({ MIMO_BIN: FIX('fake-mimo-models.mjs') })
   assert.equal(m.titleSuffix, 'MiMo')
   assert.deepEqual(m.fields.map((f) => f.key), ['defaultModel'])
   assert.equal(m.fields[0].type, 'select')
   assert.equal(m.fields[0].allowCustom, true)
-  assert.deepEqual(m.fields[0].options, [])
-  assert.match(m.fields[0].note, /未能读取模型列表/)
+  assert.deepEqual(m.fields[0].options, [], 'meta() must not probe: cache empty before a manual pull')
+  assert.deepEqual(m.fields[0].refresh, { label: '拉取可用模型' })
+  assert.match(m.fields[0].note, /拉取可用模型/)
+  // 面板渲染绝不因探测失败而抛（关掉自动探测后这条更是硬约束）。
   assert.doesNotThrow(() => provider.settings.meta({}))
 })
 
-test('settings.meta：MIMO_BIN 指向假 CLI 时 options 来自实测输出', () => {
-  const m = provider.settings.meta({ MIMO_BIN: FIX('fake-mimo-models.mjs') })
+// ── settings.refreshModels（契约 §3.2：用户点按钮才拉取）───────────────────────
+test('refreshModels：CLI 不存在 → ok:false + 可操作错误（绝不 ok:true / 空清单）', async () => {
+  const r = await provider.settings.refreshModels({}, { MIMO_BIN: join(tmpdir(), 'definitely-not-mimo-xyz.exe') })
+  assert.equal(r.ok, false)
+  assert.deepEqual(r.ids, [])
+  assert.equal(r.source, 'mimo-models')
+  assert.match(r.error, /未找到 mimo 可执行文件/)
+  // 错误必须可行动：告诉用户装 CLI 或设 MIMO_BIN，而不是一句 "failed"。
+  assert.match(r.error, /安装 MiMoCode CLI|MIMO_BIN/)
+})
+
+test('refreshModels：CLI 跑通但没有模型行 → ok:false 且指引手动确认（不伪造清单）', async () => {
+  const r = await provider.settings.refreshModels({}, { MIMO_BIN: FIX('fake-mimo-echo.mjs') })
+  assert.equal(r.ok, false)
+  assert.deepEqual(r.ids, [])
+  assert.match(r.error, /没有解析到任何 provider\/model 行/)
+})
+
+test('refreshModels：成功 → ids/labels/source 就位，并写回缓存供 meta 命中', async () => {
+  const r = await provider.settings.refreshModels({}, { MIMO_BIN: FIX('fake-mimo-models.mjs') })
+  assert.equal(r.ok, true)
+  assert.equal(r.source, 'mimo-models')
+  assert.deepEqual(r.ids, ['xiaomi/mimo-v2.6-flash', 'xiaomi/mimo-v2.6-pro'])
+  assert.equal(r.labels['xiaomi/mimo-v2.6-pro'], 'xiaomi/mimo-v2.6-pro')
+  // 缓存命中：随后的 meta() 直接给出选项（不再起进程）。
+  const m = provider.settings.meta({})
   assert.deepEqual(m.fields[0].options.map((o) => o.value), ['xiaomi/mimo-v2.6-flash', 'xiaomi/mimo-v2.6-pro'])
   assert.match(m.fields[0].note, /共 2 个可用模型/)
 })
@@ -324,7 +351,7 @@ test('settings.keys 是 defaultModel（用户手动指定模型；不写死默�
   assert.deepEqual(provider.settings.normalize(null), { defaultModel: '' })
 })
 
-test('settings.meta：defaultModel 是可自定义 select，探测失败退化为空 options 不抛', () => {
+test('settings.meta：字段形状与 placeholder 稳定（不依赖任何探测结果）', () => {
   const m = provider.settings.meta()
   assert.equal(m.titleSuffix, 'MiMo')
   assert.deepEqual(m.fields.map((f) => f.key), ['defaultModel'])
@@ -332,10 +359,9 @@ test('settings.meta：defaultModel 是可自定义 select，探测失败退化�
   assert.equal(m.fields[0].allowCustom, true)
   assert.ok(Array.isArray(m.fields[0].options), 'options must be an array')
   assert.match(m.fields[0].placeholder, /留空/)
-  // CLI 未安装/未登录 → 探测失败退化为空 options，面板仍可自由输入（严禁抛异常）。
-  const noCli = provider.settings.meta({ MIMO_BIN: join(tmpdir(), 'definitely-not-mimo-xyz.mjs') })
-  assert.deepEqual(noCli.fields[0].options, [])
-  assert.match(noCli.fields[0].note, /未能读取模型列表/)
+  // CLI 不存在时也绝不抛（缓存是进程级共享的，此处不断言空 —— 空态断言在前面的
+  // 「只读缓存」用例里，那里保证缓存尚未被填充）。
+  assert.doesNotThrow(() => provider.settings.meta({ MIMO_BIN: join(tmpdir(), 'definitely-not-mimo-xyz.exe') }))
   assert.doesNotThrow(() => provider.settings.meta({}))
 })
 
@@ -382,6 +408,9 @@ test('_internals 暴露纯函数面（测试/宿主可用）', () => {
   assert.equal(typeof I.resolveMimoExePrefix, 'function')
   assert.equal(typeof I.parseMimoModels, 'function')
   assert.equal(typeof I.fetchMimoModelsSync, 'function')
+  assert.equal(typeof I.fetchMimoModelsDetailed, 'function')
+  assert.equal(typeof I.cachedMimoModels, 'function')
+  assert.equal(typeof I.rememberMimoModels, 'function')
   assert.equal(typeof I.currentSettings, 'function')
   assert.equal(typeof I.liveSettings, 'function')
   assert.equal(typeof I.writePartition, 'function')
