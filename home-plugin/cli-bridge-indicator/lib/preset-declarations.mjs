@@ -19,13 +19,12 @@ import { dirname, join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolveScheduling } from '../../../core/scheduling.mjs'
-import { PROVIDER_IDS } from '../../../providers/registry.mjs'
+import { PROVIDER_IDS, PRESET_DIRS } from '../../../providers/registry.mjs'
 
 export const PKG_NAME = '@luchenglong/cli-bridge'
 
-// preset 目录名映射（与 scripts/build.mjs 的 PRESET_DIRS 一致；目录名带 -first 后缀是
+// preset 目录名映射：单一来源见 providers/registry.mjs 的 PRESET_DIRS（勿在此重复硬编码）。
 // 三个旧包时代的遗留布局，provider id 不带 —— 这里不映射就永远找不到 plugin-list）。
-const PRESET_DIRS = { agy: 'agy-first', codebuddy: 'codebuddy-first', mimo: 'mimo-first', opencode: 'opencode-first' }
 
 // 【成员预设】0.2.1 起 dsh-tool-subagent 的 config 不再接受 persona/toolFilter（apply()
 // 里显式 throw），角色人格只能作为独立 Agent Preset 存在、由委派行经 agentPreset 选择。

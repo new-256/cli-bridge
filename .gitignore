@@ -5,6 +5,7 @@ package-lock.json
 dist/
 
 # 本地探针 / 运行时数据（绝不入库）
+.snapshot-backup*/
 .probe/
 .tmp/
 *.bak-*

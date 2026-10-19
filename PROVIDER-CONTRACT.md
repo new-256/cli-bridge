@@ -8,10 +8,18 @@
 
 ## 0. 命名与硬约束（红线）
 
-- provider id（全小写，用于事件通道/设置分区/文件名/工具名）：`agy` | `codebuddy` | `mimo`。
-- preset id（保持旧包不变，旧会话头引用）：`cordis-agy` | `codebuddy-first` | `cordis-mimo`。
-- 模型工具名（保持旧包不变）：`agy_run/agy_continue/agy_status(/agy_quota)`、
-  `codebuddy_run/codebuddy_continue/codebuddy_status`、`mimo_run/mimo_continue/mimo_status(/mimo_settings)`。
+- provider id（全小写，用于事件通道/设置分区/文件名/工具名）：
+  `agy` | `codebuddy` | `mimo` | `opencode` | `claude` | `codex`。
+  **唯一 id 轴 = `providers/registry.mjs` 的 `PROVIDER_IDS`**；preset 目录映射的
+  **唯一来源**是同文件的 `PRESET_DIRS`（`build.mjs` / `preset-declarations.mjs` /
+  `verify.mjs` 都从它导入，**禁止**再各写一份——漏改会静默不产物或报误导性错误）。
+- preset id：`cordis-agy` | `codebuddy-first` | `cordis-mimo`（三家旧包，**保持旧值不变**，
+  旧会话头引用）；`opencode-first` | `claude-first` | `codex-first`（本包新增，直接用
+  `<id>-first`）。注意 preset **目录名**与 presetId 不一定相同（agy/mimo 是旧包历史遗留）。
+- 工具名（旧包语义逐字保持）：`agy_run/agy_continue/agy_status(/agy_quota)`、
+  `codebuddy_run/codebuddy_continue/codebuddy_status(/codebuddy_models)`、
+  `mimo_run/mimo_continue/mimo_status(/mimo_settings)`、`opencode_run/…(/opencode_models)`、
+  `claude_run/…(/claude_models)`、`codex_run/…(/codex_models)`。
 - 客户端契约（红线 4）：浏览器半注册 id **必须**等于包名 `@luchenglong/cli-bridge`；
   该文件是 keystone（`home-plugin/cli-bridge-indicator/lib/client.js`），provider 作者**不碰**。
 - 动态沙箱形态禁止 `import/require`；派生文件一律由 `node scripts/build.mjs` 生成，
@@ -232,4 +240,45 @@ export function check(env) → true | throw                             // --che
   桌面 HTTP 路径（desktopFetch/desktopSendTurn 等）：preset/MCP 形态可用全局 fetch 与
   node: 模块，dynamic 沙箱形态若拿不到 fetch 则 preflight 报 `DESKTOP_UNREACHABLE`
   并提示改用 mimocode 后端（保持旧包语义）。
+
+## 10. claude / codex 的实测事实（0.2.9 接入，改动前必读）
+
+两家都是**在真机上跑出来的**，下面每条都有单测或 `check()` 防线钉住，别凭直觉"顺手修正"。
+
+### claude（Claude Code，实测 2.0.76）
+- 非交互：`claude -p <prompt> --output-format text|json|stream-json [--verbose]`。
+  `stream-json` 必须配 `--verbose`，否则只吐结果不吐事件。
+- 事件：`system`（含 `session_id` / `model` / `tools` / `permissionMode` / `apiKeySource`）→
+  `assistant`（`message`）→ `result`（`subtype` / `is_error` / `result` / `session_id` /
+  `total_cost_usd` / `usage` / `modelUsage`）。
+- **成功判定陷阱**：`is_error=true` 时退出码可能是 0 也可能是 1，且 `subtype` 仍可能是
+  `"success"`（无效模型实测就是这个形状）。判定必须 `is_error === false && exitCode === 0`。
+- 续聊：`--resume <session_id>` / `-c|--continue` / `--fork-session`。
+- 模型清单：**唯一权威来源 = 无效模型触发的服务端 400 报文**
+  `"The supported API model names are X, Y, ..."`。`~/.claude/settings.json` 的 env 块里
+  `ANTHROPIC_DEFAULT_*_MODEL` / `ANTHROPIC_MODEL` 是**用户配置的别名映射，不是服务端可用
+  全集**（实测两者不一致），只能作诊断线索。
+- 权限：`-p` 无 TTY，任何需要交互批准的动作都会挂到超时，故 auto 模式映射为
+  `--dangerously-skip-permissions`（或 plan 态 `--permission-mode plan`）。
+
+### codex（OpenAI Codex CLI，实测 0.98.0）
+- 非交互：`codex exec [opts] <prompt>`；`--json` 出事件流，不加就是纯文本。
+- 事件：`thread.started`（`thread_id`）→ `turn.started` → `item.completed`（`item`）→
+  `turn.completed`（`usage`）。
+- **`codex exec` 不接受 `-a/--ask-for-approval`**（那是根命令 `codex` 的旗，clap 会报
+  unexpected argument）→ 审批只能 `-c approval_policy="…"`。
+- **`codex exec resume` 不支持 `-C/-s/-o/--add-dir`** → cwd 交给 spawn 的 `cwd`，
+  沙箱走 `-c sandbox_mode="…"`。
+- **`item.completed` 里 `item.type==="error"` 是告警，不是致命错**（`resume --last` 会带一条
+  「此会话原模型与当前模型不同」）。致命只有顶层 `error` / `turn.failed`；
+  成功判据 = 退出码 0 + 收到 `turn.completed` + 无顶层错误。
+- 非 git 目录必须 `--skip-git-repo-check`。
+- 退出码：0 成功；1 运行错误（stdout 仍是合法事件流）；2 参数错误。
+- 配置/凭据：`~/.codex/config.toml`（`model` / `model_provider` /
+  `[model_providers.<name>]` 的 `base_url` + `experimental_bearer_token` /
+  `model_catalog_json`）、`~/.codex/auth.json`（`OPENAI_API_KEY` / `OPENAI_BASE_URL`）；
+  `CODEX_HOME` 可覆盖目录。**模型清单默认只走 live**（`GET {base_url}/models`），
+  本地 `model_catalog_json` / `models.json` 仅在显式 `source=catalog|builtin` 时返回。
+- npm 全局安装得到的是 `.cmd` shim：无 shell 时 spawn 不了，走 shell 会把 prompt 二次解释。
+  因此命中 `.cmd/.bat` 时**明确报错并指引指向真实 exe**，不静默套 shell、不静默降级。
 

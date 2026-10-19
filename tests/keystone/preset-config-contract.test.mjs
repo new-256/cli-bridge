@@ -39,11 +39,20 @@ import { createRequire } from 'node:module'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { PRESET_DIRS as BRIDGE_PRESET_DIRS } from '../../providers/registry.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
-/** 覆盖对象：4 个 provider 预设 + 1 个成员预设（单源 plugin-list.mjs，无生成物 yml）。 */
-const PRESET_DIRS = ['agy-first', 'codebuddy-first', 'mimo-first', 'mimo-member', 'opencode-first']
+/**
+ * 覆盖对象：全部 provider 预设（目录名从注册表派生）+ 成员预设（单源 plugin-list.mjs，
+ * 无生成物 yml）。
+ *
+ * ⚠ 这里曾硬编码 `['agy-first','codebuddy-first','mimo-first','mimo-member','opencode-first']`，
+ * 新增 provider 时漏改 → 新预设**静默不被本契约测试覆盖**（claude/codex 接入时踩到）。
+ * 现按 `providers/registry.mjs` 的 PRESET_DIRS 派生，加第 N 家 provider 本文件零改动。
+ */
+const MEMBER_PRESET_DIRS = ['mimo-member']
+const PRESET_DIRS = [...Object.values(BRIDGE_PRESET_DIRS), ...MEMBER_PRESET_DIRS]
 
 // ── 实装包根解析（DSH_NODE_MODULES 优先）──────────────────────────────────────
 const DSH_NM_CANDIDATES = [

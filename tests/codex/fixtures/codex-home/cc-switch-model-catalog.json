@@ -1,0 +1,7 @@
+{
+  "models": [
+    { "slug": "fixture/free-model:free", "display_name": "fixture/free-model:free", "visibility": "list", "context_window": 128000 },
+    { "slug": "fixture/paid-model", "display_name": "Fixture Paid", "visibility": "list", "context_window": 256000 },
+    { "slug": "fixture/hidden-model", "display_name": "Fixture Hidden", "visibility": "hide", "context_window": 8000 }
+  ]
+}

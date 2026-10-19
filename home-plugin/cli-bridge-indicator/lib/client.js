@@ -1,11 +1,6 @@
-// cli-bridge-indicator — browser half (home-level plugin). 一盏灯聚合三个 CLI：AGY / CB / MIMO。
-//
-// 合并 agy-indicator / codebuddy-indicator / mimo-indicator 三个家级客户端为单文件：
-//   每 1.2s 轮询 GET /cli-bridge/status → { providers:{ agy,codebuddy,mimo } }，
-//   每个 provider 各画一组 pill（有活动=全局显示；空转「就绪」灯=仅本会话该 preset 时显示）。
-//   settings.section 一个分区「CLI Bridge」，按 provider 卡片渲染偏好（字段由后端 meta 驱动，
-//   本文件不硬编码任何 provider 专有字段 —— provider 侧改设置项无需动这层）。
-//
+// cli-bridge-indicator — browser half (home-level plugin)，一盏灯聚合本机 CLI。
+// 每 1.2s 轮询 GET /cli-bridge/status → { providers:{...} }，每个 provider 画一组 pill（有活动=全局
+// 显示；空转「就绪」灯=仅本会话在该 preset 时显示）。settings 分区字段全由后端 meta 驱动。
 // running→蓝呼吸 ⟳  ok→绿 ✓  failed→红 ✗  fallback→琥珀 ↩  idle→灰 标签。
 //
 // ⚠⚠⚠ 红线 4（历史事故：agy v1.6.1 / codebuddy v1.1.8）：下方 __ModuleLoader__.load({ id })
@@ -51,7 +46,6 @@ window.__ModuleLoader__.load({
       }
       return out;
     }
-
 
     const CSS = [
       ".clb-row{display:inline-flex;align-items:center;gap:6px}",

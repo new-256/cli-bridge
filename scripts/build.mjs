@@ -20,7 +20,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
-import { PROVIDER_IDS } from '../providers/registry.mjs'
+import { PROVIDER_IDS, PRESET_DIRS } from '../providers/registry.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // 单一 id 轴：新 provider 只改 registry（PROVIDER-CONTRACT.md §3.1），build 派生
@@ -222,7 +222,6 @@ function yamlInlineObject(obj, indent) {
   return lines.join('\n')
 }
 
-const PRESET_DIRS = { agy: 'agy-first', codebuddy: 'codebuddy-first', mimo: 'mimo-first', opencode: 'opencode-first' }
 
 async function loadPluginList(id) {
   const rel = 'preset/' + PRESET_DIRS[id] + '/plugin-list.mjs'

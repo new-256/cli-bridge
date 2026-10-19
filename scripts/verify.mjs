@@ -54,7 +54,7 @@ for (const [spec, rel] of Object.entries(pkg.exports || {})) {
 ok.push('exports targets exist (' + Object.keys(pkg.exports || {}).length + ')')
 
 // 4. preset 桥接说明符
-const { PROVIDER_IDS, createProvider } = await import(pathToFileURL(join(ROOT, 'providers', 'registry.mjs')).href)
+const { PROVIDER_IDS, PRESET_DIRS, createProvider } = await import(pathToFileURL(join(ROOT, 'providers', 'registry.mjs')).href)
 for (const id of PROVIDER_IDS) {
   const exportKey = './preset-' + id
   if (!pkg.exports || !pkg.exports[exportKey]) errors.push('package.json exports[' + exportKey + '] missing (preset bridge row needs it)')
@@ -81,8 +81,14 @@ const patchRel = pkg.dsh && pkg.dsh.bundle && pkg.dsh.bundle.patch
 if (!patchRel || !existsSync(join(ROOT, String(patchRel).replace(/^\.\//, '')))) errors.push('package.json dsh.bundle.patch target missing')
 
 // 7. 生成物存在（dynamic host / agent yml 至少 plugin-list 在；fresh clone 需先 build）
+//    ⚠ 目录映射单一来源：`providers/registry.mjs` 的 PRESET_DIRS。此处曾自带一份
+//    三处重复的硬编码映射（build.mjs / preset-declarations.mjs / 本文件各一份），
+//    新增 provider 时漏改本文件就会报「plugin-list missing」这种误导性错误
+//    （claude/codex 接入时实际踩到）。统一到一处后再加第 N 家 provider 零改动。
 for (const id of PROVIDER_IDS) {
-  if (!read('preset/' + ({ agy: 'agy-first', codebuddy: 'codebuddy-first', mimo: 'mimo-first', opencode: 'opencode-first' })[id] + '/plugin-list.mjs')) errors.push('preset/' + id + ' plugin-list.mjs missing')
+  const dir = PRESET_DIRS[id]
+  if (!dir) { errors.push('provider ' + id + ': no PRESET_DIRS entry in providers/registry.mjs'); continue }
+  if (!read('preset/' + dir + '/plugin-list.mjs')) errors.push('preset/' + id + ' plugin-list.mjs missing (expected preset/' + dir + '/plugin-list.mjs)')
 }
 
 // 8. 版本双锁：mcp server const + CHANGELOG 顶部条目 === package.json version

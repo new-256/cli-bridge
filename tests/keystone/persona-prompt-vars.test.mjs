@@ -30,19 +30,15 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { PRESET_DIRS } from '../../providers/registry.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 /** DSH 提示词循环当前注册的变量（dsh-agent-loop：provider / model）。 */
 const REGISTERED = ['provider', 'model']
 
-/** provider id → preset 目录名（与 preset-declarations.mjs 的 PRESET_DIRS 同源）。 */
-const PRESET_DIRS = {
-  agy: 'agy-first',
-  codebuddy: 'codebuddy-first',
-  mimo: 'mimo-first',
-  opencode: 'opencode-first',
-}
+/** provider id → preset 目录名：单一来源 = providers/registry.mjs 的 PRESET_DIRS。
+ *  （此处曾自带一份硬编码副本，新增 provider 漏改 → 新预设静默不受本测试覆盖。） */
 
 /** 成员预设目录（0.2.1 起角色人格只能作为独立预设存在；无生成物 yml）。 */
 const MEMBER_DIRS = ['mimo-member']

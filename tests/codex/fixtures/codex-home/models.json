@@ -1,0 +1,6 @@
+{
+  "models": [
+    { "slug": "builtin/one", "display_name": "Builtin One" },
+    { "slug": "builtin/two", "display_name": "Builtin Two" }
+  ]
+}

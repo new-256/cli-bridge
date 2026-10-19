@@ -9,6 +9,55 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 > - CodeBuddy 线：[docs/history/codebuddy/CHANGELOG.md](docs/history/codebuddy/CHANGELOG.md)（终版 1.6.2）
 > - MiMo 线：[docs/history/mimo/CHANGELOG.md](docs/history/mimo/CHANGELOG.md)（终版 1.2.9）
 
+## [0.2.9] - 2026-10-20
+
+### Added
+- **两家新 provider：`claude`（Claude Code）与 `codex`（OpenAI Codex CLI）**，四形态全覆盖
+  （描述符 / 持久 Agent Preset / dynamic 沙箱宿主 / MCP 工具面），`PROVIDER_IDS` 由 4 家扩到 6 家：
+  - `claude`：工具 `claude_run` / `claude_continue` / `claude_status` + `claude_models`；
+    preset `claude-first`。走 `-p --output-format stream-json --verbose`，从 `system`/`assistant`/
+    `result` 事件折叠实时步骤；sessionId 取 `result.session_id`，续聊走 `--resume`。
+  - `codex`：工具 `codex_run` / `codex_continue` / `codex_status` + `codex_models`；
+    preset `codex-first`。走 `exec --json`，从 `thread.started`/`turn.started`/`item.completed`/
+    `turn.completed` 折叠；sessionId 取 `thread_id`，续聊走 `exec resume <id>`。
+  - 两者默认权限都按「非交互无 TTY」处理（claude `--dangerously-skip-permissions`；codex
+    `-c approval_policy` + `sandbox_mode`），并把可选项暴露成设置项
+    （claude `maxBudgetUsd`；codex `sandboxMode` / `approvalPolicy`）。
+- **模型清单一律实时、绝不冒充**（延续 0.2.6/0.2.7 对 codebuddy 的整改纪律）：
+  - `claude_models` 唯一权威来源 = 无效模型触发的服务端 400 报文
+    （「The supported API model names are …」），实测本机为 `deepseek-flash, deepseek-v4-pro`；
+    `~/.claude/settings.json` 里配置的 `ANTHROPIC_DEFAULT_*_MODEL` 只作诊断线索，不进可用清单。
+  - `codex_models` 默认只走 live（`GET {base_url}/models` + Bearer，实测 OpenRouter 返回 469 项；
+    过滤后可对话的 80 项）；本地 `model_catalog_json` / `models.json` 仅在**显式**
+    `source=catalog|builtin` 时返回并逐项标注，绝不冒充实时。任何失败（含 200 但 0 个模型、
+    畸形载荷、401）一律 `ok:false` + 可操作错误。
+
+### Changed
+- **`PRESET_DIRS`（provider id → `preset/<dir>/`）统一为单一来源**：原先在
+  `scripts/build.mjs`、`home-plugin/.../preset-declarations.mjs`、`scripts/verify.mjs`
+  各硬编码一份，新增 provider 漏改任一处就会出现「产物静默不生成」或误导性的
+  「plugin-list missing」。现统一从 `providers/registry.mjs` 导入，加第 N 家 provider 三处零改动。
+- **keystone 测试去掉同类硬编码**（否则新预设静默不被覆盖）：
+  `tests/keystone/scheduling-gate.test.mjs` 的 apply 映射改为按 `PRESET_DIRS` 动态 import；
+  `tests/keystone/preset-config-contract.test.mjs` 与 `persona-prompt-vars.test.mjs`
+  的目录清单改为从 registry 派生 —— 现在自动覆盖全部 7 个 preset（含 `claude-first` /
+  `codex-first` / 成员预设 `mimo-member`）。
+- `package.json` description 更新为六家；`.snapshot-backup*/` 加入 `.gitignore` 并移出 git 索引。
+
+### Fixed
+- `home-plugin/cli-bridge-indicator/lib/client.js` 由 606 行压到 600 行（红线内）。压缩只用
+  无损手段（合并重复的头部叙述、删一处多余空行）；**保留红线 4**：`__ModuleLoader__.load({ id })`
+  逐字等于包名，`tests/keystone/client-ui-surface.test.mjs` 的「声明必须存在」守卫未被削弱
+  （曾尝试把两张查表合并成一条声明，会破坏该守卫的正则，已回退）。
+
+### 说明（实测更正，防回归）
+codex 团队用真实 CLI 更正了三处易错事实，已在描述符里加防线并有单测钉死：
+1. `codex exec` **不接受** `-a/--ask-for-approval`（那是根命令的旗）→ 审批只能
+   `-c approval_policy="…"`；
+2. `codex exec resume` **没有** `-C/-s/-o/--add-dir` → cwd 交 spawn、沙箱走 `-c sandbox_mode="…"`；
+3. `item.completed` 里 `item.type==="error"` 是**告警**（续聊会带一条「原模型与当前模型不同」），
+   不是致命错；成功判据 = 退出码 0 + 收到 `turn.completed` + 无顶层错误。
+
 ## [0.2.8] - 2026-10-18
 
 > 用户使用 agy 优先模式时整轮失败：

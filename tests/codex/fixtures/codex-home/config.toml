@@ -1,0 +1,18 @@
+# tests/codex/fixtures/codex-home/config.toml — 假 CODEX_HOME（本机 ~/.codex 的最小形态）。
+# base_url 指向本机未监听端口：实时探测必须快速 ECONNREFUSED，测试才不会卡网络超时。
+model = "fixture/model-one"
+model_provider = "custom"
+model_catalog_json = "cc-switch-model-catalog.json"
+approval_policy = "never"
+sandbox_mode = "read-only"
+
+notify = [ "C:\\fixture\\notify.exe", "turn-ended" ]
+
+[model_providers.custom]
+name = "Fixture"
+base_url = "http://127.0.0.1:9/api/v1"
+wire_api = "responses"
+experimental_bearer_token = "fixture-token-not-a-secret"
+
+[tui]
+screen_reader_detection_done = true

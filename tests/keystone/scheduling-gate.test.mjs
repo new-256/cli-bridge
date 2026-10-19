@@ -17,11 +17,21 @@ import { apply as applyCodebuddy } from '../../preset/codebuddy-first/cli-bridge
 import { apply as applyMimo } from '../../preset/mimo-first/cli-bridge.mjs'
 import { apply as applyOpencode } from '../../preset/opencode-first/cli-bridge.mjs'
 import { declareBridgePresets, memberPresetIds } from '../../home-plugin/cli-bridge-indicator/lib/preset-declarations.mjs'
-import { PROVIDER_IDS, providerMeta } from '../../providers/registry.mjs'
+import { PROVIDER_IDS, PRESET_DIRS, providerMeta } from '../../providers/registry.mjs'
 
-// 单一 id 轴（契约 §3.1）：id 清单与 apply 映射都从注册表派生，禁止硬编码三家。
+// 单一 id 轴（契约 §3.1）：id 清单、preset 目录、apply 映射**全部**从注册表派生。
+// 此前这里硬编码过 `{ agy: applyAgy, ... }` 四家映射（注释却写着"禁止硬编码三家"）——
+// 新增 provider 时漏改就会抛 `SELF[id] is not a function`（claude 接入时实际踩到）。
+// 现在按 PRESET_DIRS 动态 import，加第 N 家 provider 本文件零改动。
 const IDS = PROVIDER_IDS.slice()
-const SELF = { agy: applyAgy, codebuddy: applyCodebuddy, mimo: applyMimo, opencode: applyOpencode }
+const SELF = Object.create(null)
+for (const id of IDS) {
+  const dir = PRESET_DIRS[id]
+  if (!dir) throw new Error('providers/registry.mjs PRESET_DIRS missing entry for ' + id)
+  const mod = await import('../../preset/' + dir + '/cli-bridge.mjs')
+  if (typeof mod.apply !== 'function') throw new Error('preset/' + dir + '/cli-bridge.mjs exports no apply()')
+  SELF[id] = mod.apply
+}
 /** provider id → preset id（从描述符派生，避免第二处硬编码）。 */
 const PRESET_OF = Object.create(null)
 for (const id of IDS) PRESET_OF[id] = providerMeta(id).presetId

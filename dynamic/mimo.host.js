@@ -1230,7 +1230,7 @@ function isBridgeEnabled(selfId, ids, io) {
 }
 
 
-const SCHED_ALL_IDS = ["agy","codebuddy","mimo","opencode"]
+const SCHED_ALL_IDS = ["agy","codebuddy","mimo","opencode","claude","codex"]
 
 
 return {
