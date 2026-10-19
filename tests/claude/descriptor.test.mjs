@@ -8,6 +8,10 @@ import defineProvider, { parseSupportedModels, resolveExePrefix, claudeExeCandid
 import { POLICY_TEXT } from '../../providers/claude-policy.mjs'
 
 const FIX = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url))
+// 端点探活的注入桩：让 buildArgv 断言与本机 cc-switch 代理是否在跑**无关**（密闭）。
+// alive:false → 直连（不注入 --settings）；alive:true → 走代理（注入 --settings）。
+const DIRECT = { probeProxy: () => ({ alive: false, detail: 'test-forced-direct' }) }
+const PROXY = { probeProxy: () => ({ alive: true, detail: 'ALIVE 200' }) }
 const provider = defineProvider({ env: {} })
 
 // ── 契约字段（PROVIDER-CONTRACT.md §1）─────────────────────────────────────────
@@ -72,10 +76,30 @@ test('splitExeSpec：三种形态（node / shell / binary）', () => {
 
 // ── buildArgv ────────────────────────────────────────────────────────────────
 test('buildArgv 默认：-p <prompt> + stream-json + verbose + skip-permissions', () => {
-  const b = provider.buildArgv(['claude'], { prompt: 'Reply exactly: PONG' }, { planActive: false })
+  const b = provider.buildArgv(['claude'], { prompt: 'Reply exactly: PONG' }, Object.assign({ planActive: false }, DIRECT))
   assert.deepEqual(b.argv, ['claude', '-p', 'Reply exactly: PONG', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions'])
   assert.equal(b.mode, 'bypass', 'auto + 非 plan 会话 → bypass（-p 无 TTY，不能等批准）')
   assert.equal(b.timeoutSec, 600)
+})
+
+test('buildArgv：端点走 cc-switch 代理时注入 --settings（只覆盖 base_url）', () => {
+  // 真实场景：cc-switch 的 proxy 模式把 Claude 指向第三方网关，网关要自家 session 头而
+  // claude CLI 不发 → 直连必然 400，必须经本地代理转发。桥接用 --settings 覆盖，不改用户配置。
+  const b = provider.buildArgv(['claude'], { prompt: 'p' }, Object.assign({ planActive: false }, PROXY))
+  const i = b.argv.indexOf('--settings')
+  assert.ok(i >= 0, 'proxy mode must inject --settings')
+  const overlay = JSON.parse(b.argv[i + 1])
+  assert.ok(/^https?:\/\//.test(overlay.env.ANTHROPIC_BASE_URL), 'base_url must be a URL')
+  assert.deepEqual(Object.keys(overlay.env), ['ANTHROPIC_BASE_URL'], 'must NOT override other env keys')
+})
+
+test('buildArgv：endpointMode=proxy 但代理不可用 → 明确抛错（绝不静默直连）', () => {
+  const p = defineProvider({ env: {}, readSettings: () => ({ endpointMode: 'proxy' }) })
+  assert.throws(
+    () => p.buildArgv(['claude'], { prompt: 'p' }, { planActive: false, probeProxy: () => ({ alive: false, detail: 'ECONNREFUSED' }) }),
+    /无响应/i,
+    'forced proxy + dead proxy must fail loudly, never silently fall back to direct'
+  )
 })
 
 test('buildArgv：auto + plan 会话 → --permission-mode plan（不叠加 bypass）', () => {
@@ -367,7 +391,7 @@ test('settings.refreshModels：成功 → ok:true + 权威 ids + 写回缓存（
   resetModelsCache()
 })
 
-test('settings.refreshModels：labels 只给配置里映射过的 id 加注（value 仍是纯 id）', async () => {
+test('settings.refreshModels：配置来源与服务端来源合并，labels 标明各自出处', async () => {
   resetModelsCache()
   const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
@@ -378,26 +402,33 @@ test('settings.refreshModels：labels 只给配置里映射过的 id 加注（va
   try {
     const r = await provider.settings.refreshModels({ binPath: '' }, { CLAUDE_BIN: FIX, USERPROFILE: home })
     assert.equal(r.ok, true)
+    // 配置里的 alpha 排在前（用户实际在用），服务端报文的 beta 补充在后。
     assert.deepEqual(r.ids, ['fake-model-alpha', 'fake-model-beta'])
+    assert.equal(r.source, 'configured+account-live', 'both sources present -> merged label')
+    // labels 必须标明出处：配置项点名它来自哪个环境变量，服务端项标「服务端清单」。
     assert.match(r.labels['fake-model-alpha'], /ANTHROPIC_DEFAULT_OPUS_MODEL/)
-    assert.equal(r.labels['fake-model-beta'], undefined)
+    assert.match(r.labels['fake-model-beta'], /服务端清单/)
   } finally { rmSync(home, { recursive: true, force: true }); resetModelsCache() }
 })
 
-test('settings.refreshModels：探测失败 → ok:false + 空 ids + 可操作错误（绝不 ok:true 空清单）', async () => {
+test('settings.refreshModels：无配置且探测失败 → ok:false + 空 ids + 可操作错误', async () => {
   resetModelsCache()
+  // USERPROFILE 为空 → 读不到 settings.json → 没有任何可用来源 → 必须显式失败。
   const r = await provider.settings.refreshModels({ binPath: '' }, { CLAUDE_BIN: 'C:/definitely-not-here/claude.exe', USERPROFILE: '' })
   assert.equal(r.ok, false)
   assert.deepEqual(r.ids, [], '失败时 ids 必须为空数组（keystone 只认 ok && ids.length）')
-  assert.equal(r.source, 'account-live')
-  assert.match(r.error, /无法获取服务端权威模型清单/)
+  assert.ok(String(r.error).length > 20)
   assert.match(r.error, /排查顺序/, '错误必须告诉用户下一步怎么做')
   // 失败不得污染缓存：meta() 依旧空。
   assert.deepEqual(provider.settings.meta({ CLAUDE_BIN: 'C:/definitely-not-here/claude.exe', USERPROFILE: '' }).fields.find((f) => f.key === 'defaultModel').options, [])
   resetModelsCache()
 })
 
-test('settings.refreshModels：配置文件里的别名绝不冒充可用清单（端点回 400 无名录时）', async () => {
+test('settings.refreshModels：配置来源的模型必须标明 configured，绝不冒充服务端权威', async () => {
+  // 语义演进（2026-10-20 实测）：服务端 400 报文只回基础模型名，而用户配置在用的
+  // `deepseek-v4-pro[1M]` / `deepseek-v4-flash` 实测都能 200。只信报文等于给出
+  // 一份「比用户配的还少」的清单。故配置**成为合法来源之一**，但必须在 labels 里
+  // 标明出处 —— 这次断言的正是「标注」这条红线，而不是「禁止出现」。
   resetModelsCache()
   const prev = process.env.FAKE_CLAUDE_MODE
   process.env.FAKE_CLAUDE_MODE = 'probe-accepts'
@@ -409,10 +440,12 @@ test('settings.refreshModels：配置文件里的别名绝不冒充可用清单�
   writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ env: { ANTHROPIC_MODEL: 'looks-like-a-model' } }), 'utf8')
   try {
     const r = await provider.settings.refreshModels({}, { CLAUDE_BIN: FIX, USERPROFILE: home })
-    assert.equal(r.ok, false)
-    assert.deepEqual(r.ids, [])
-    assert.ok(!JSON.stringify(r).includes('looks-like-a-model'), '配置别名绝不能出现在「可用清单」里')
-    assert.match(r.error, /排查顺序/)
+    // 端点接受探测名（无 400 报文）→ 服务端来源缺失；但配置来源有效 → ok:true 且标 configured。
+    assert.equal(r.ok, true)
+    assert.ok(r.ids.includes('looks-like-a-model'))
+    assert.equal(r.source, 'configured', 'probe gave nothing -> configured only')
+    assert.match(r.labels['looks-like-a-model'], /ANTHROPIC_MODEL/, 'must name the config key it came from')
+    assert.ok(!/服务端清单/.test(r.labels['looks-like-a-model']), 'config-sourced item must NOT be labelled as server-authoritative')
   } finally {
     rmSync(home, { recursive: true, force: true })
     if (prev === undefined) delete process.env.FAKE_CLAUDE_MODE

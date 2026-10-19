@@ -14,6 +14,9 @@ writeFileSync(join(HOME, 'cli-bridge-settings.json'), JSON.stringify({ claude: {
 process.env.CLI_BRIDGE_SETTINGS_FILE = join(HOME, 'cli-bridge-settings.json')
 // preset 形态在 apply() 里用 process.env 构造描述符；exe 探测据此命中 fixture（.mjs → node 包装）。
 process.env.CLAUDE_BIN = FIX
+// 隔离 claude 配置目录：否则模型清单会读**本机真实** ~/.claude/settings.json，
+// 把用户实际在用的模型混进 fixture 断言（实测踩到）。
+process.env.CLAUDE_CONFIG_DIR = join(HOME, '.claude')
 
 const mod = await import('../../preset/claude-first/cli-bridge.mjs')
 

@@ -21,7 +21,8 @@
 //  - 模型清单只认服务端权威探测；拿不到 = ok:false + 可操作错误（绝不静默空数组/配置冒充）。
 import { createStatusEngine, createRunner, clampInt, isLimited } from '../core/bridge-kit.mjs'
 import { claudeExeCandidates, claudePathHint, resolveExePrefix, splitExeSpec, CLAUDE_BIN_ENV_VARS } from './claude-exe.mjs'
-import { PROBE_MODEL, parseSupportedModels, probeSupportedModels, readCachedModels, readConfiguredModels, listAccountModels, resetModelsCache } from './claude-models.mjs'
+import { PROBE_MODEL, parseSupportedModels, probeSupportedModels, readCachedModels, readConfiguredModels, listAccountModels, resetModelsCache, claudeConfigDir } from './claude-models.mjs'
+import { ENDPOINT_MODES, DEFAULT_PROXY_URL, resolveEndpoint, overlaySettingsJson, readConfiguredBaseUrl } from './claude-endpoint.mjs'
 // 单行 re-export（build 内联时整行剥离；多行形态风险见 build.mjs 的 stripModuleSyntax 注释）。
 export { claudeExeCandidates, claudePathHint, resolveExePrefix, splitExeSpec, PROBE_MODEL, parseSupportedModels, probeSupportedModels, readCachedModels, readConfiguredModels, listAccountModels, resetModelsCache }
 
@@ -192,6 +193,12 @@ export default function defineProvider(deps = {}) {
       else argv.push('--output-format', 'json')
       if (stream && args.includePartialMessages) argv.push('--include-partial-messages')
       const timeoutSec = clampInt(args.timeoutSec, 600, 10, 3600)
+      // 端点：cc-switch 的 proxy 模式把 Claude 指向第三方网关，而该网关要求自家 session 头
+      // （claude CLI 不会发）——**直连必然 400**，必须经 cc-switch 本地代理转发。
+      // 这里用 --settings 只覆盖 ANTHROPIC_BASE_URL，绝不改写用户的 ~/.claude/settings.json。
+      const ep = resolveEndpoint(currentSettings(), deps.env || {}, { probe: o.probeProxy, configDir: claudeConfigDir(deps.env || {}) })
+      if (ep.error) { const e = new Error(ep.error); e.code = 'ENDPOINT_UNAVAILABLE'; throw e }
+      if (ep.mode === 'proxy' && ep.baseUrl) argv.push('--settings', overlaySettingsJson(ep.baseUrl))
 
       // 权限：auto → 跟随 DSH plan 状态；plan 用 CLI 的 plan 模式，其余走 bypass
       //（-p 没有 TTY，任何交互批准都会挂到超时 —— 与 agy/codebuddy/opencode 同语义）。
@@ -429,6 +436,8 @@ export default function defineProvider(deps = {}) {
         const cached = readCachedModels(e, { binPath: s.binPath })
         const options = (cached ? cached.ids : []).map((id) => ({ value: id, label: id }))
         const exeCandidates = claudeExeCandidates(e, '')
+        // 端点实际走向（proxy / direct）——面板上如实显示，用户不用猜为什么请求失败。
+        const epInfo = resolveEndpoint(s, e, { configDir: claudeConfigDir(e) })
         return {
           titleSuffix: 'Claude Code',
           fields: [
@@ -452,6 +461,20 @@ export default function defineProvider(deps = {}) {
               key: 'maxBudgetUsd', label: '单次最大花费（美元）', type: 'text',
               placeholder: '留空 = 不限制',
               note: '非空时自动附加 --max-budget-usd；调用参数 maxBudgetUsd 可覆盖。'
+            },
+            {
+              key: 'endpointMode', label: '端点模式', type: 'select',
+              options: [
+                { value: 'auto', label: 'auto —— 代理活着就走代理，否则直连' },
+                { value: 'proxy', label: 'proxy —— 强制走本地代理' },
+                { value: 'direct', label: 'direct —— 强制直连配置的端点' }
+              ],
+              note: epInfo.note + '。cc-switch 的 proxy 模式把 Claude 指向第三方网关，该网关要求自家 session 头而 claude CLI 不会发：直连必然 400，必须经 cc-switch 本地代理转发。'
+            },
+            {
+              key: 'proxyUrl', label: '本地代理地址', type: 'text',
+              placeholder: DEFAULT_PROXY_URL,
+              note: 'cc-switch 的本地代理默认监听 127.0.0.1:15721。若你改过端口，填这里。桥接用 --settings 只覆盖 ANTHROPIC_BASE_URL，**不会改写** ~/.claude/settings.json。'
             }
           ]
         }
@@ -469,24 +492,30 @@ export default function defineProvider(deps = {}) {
       async refreshModels(settings, env2) {
         const e = (env2 && typeof env2 === 'object') ? env2 : env
         const s = descriptor.settings.normalize(settings)
+        // 探测必须走**同一个端点**：cc-switch proxy 模式下直连第三方网关会 400，那样探测
+        // 永远拿不到东西（但配置清单仍应给出，见 listAccountModels 的合并逻辑）。
+        const ep = resolveEndpoint(s, e, { configDir: claudeConfigDir(e) })
         const got = await listAccountModels(e, {
           binPath: s.binPath,
+          baseUrl: ep.mode === 'proxy' ? ep.baseUrl : '',
           timeoutMs: REFRESH_TIMEOUT_MS,
           refresh: true
         })
         if (!got.ok) {
-          return { ok: false, ids: [], source: 'account-live', error: String(got.error || 'probe failed') + ' ' + REFRESH_HINT }
+          return { ok: false, ids: [], source: got.source || 'none', error: String(got.error || 'probe failed') + ' ' + REFRESH_HINT + ' 端点：' + ep.note }
         }
         const ids = (got.models || []).map((m) => m.id).filter(Boolean)
         if (!ids.length) {
-          // 走到这里说明探测自称成功却没给出任何 id —— 那是 bug，不是「无模型」，
-          // 必须显式失败，绝不能让面板显示一个空清单当成功。
-          return { ok: false, ids: [], source: 'account-live', error: '探测声称成功但未返回任何模型 id（内部不一致）。' + REFRESH_HINT }
+          return { ok: false, ids: [], source: got.source || 'none', error: '探测声称成功但未返回任何模型 id（内部不一致）。' + REFRESH_HINT }
         }
-        // labels 只给「配置里还映射着某个 ANTHROPIC_*_MODEL」的项加注（纯展示，value 仍是 id）。
+        // labels 标出「来自配置」还是「服务端报文补充」，面板可据此区分来源。
         const labels = {}
-        for (const m of got.models) if (m.configuredAs) labels[m.id] = m.id + '  [' + m.configuredAs + ']'
-        return { ok: true, ids, labels, source: 'account-live' }
+        for (const m of got.models) {
+          labels[m.id] = m.id + (m.source === 'configured'
+            ? '  [' + String(m.configuredAs || 'settings.json') + ']'
+            : '  [服务端清单]')
+        }
+        return { ok: true, ids, labels, source: got.source || 'configured', endpoint: ep.note }
       },
       diagnose: (settings, env2) => {
         const s = settings && typeof settings === 'object' ? settings : {}

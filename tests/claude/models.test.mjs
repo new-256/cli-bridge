@@ -148,35 +148,38 @@ test('readCachedModels：面板用的「纯读缓存」——没拉过 = null，
   assert.equal(readCachedModels(env, {}), null)
 })
 
-test('listAccountModels：成功时 models 来自服务端，configuredAs 只是标注', async () => {
+test('listAccountModels：配置来源在前、服务端来源补充，各带 source 标注', async () => {
   resetModelsCache()
   const home = mkHome({ ANTHROPIC_MODEL: 'fake-model-alpha', ANTHROPIC_DEFAULT_HAIKU_MODEL: 'not-supported-anywhere' })
   try {
     const r = await listAccountModels({ CLAUDE_BIN: FIX, USERPROFILE: home }, {})
     assert.equal(r.ok, true)
-    assert.equal(r.source, 'account-live')
-    assert.deepEqual(r.models.map((m) => m.id), ['fake-model-alpha', 'fake-model-beta'])
+    // 两个来源都有效 → 合并标注。
+    assert.equal(r.source, 'configured+account-live')
+    // 配置来源在前（用户实际在用），服务端独有的补后，重复项去重。
+    assert.deepEqual(r.models.map((m) => m.id), ['fake-model-alpha', 'not-supported-anywhere', 'fake-model-beta'])
+    assert.equal(r.models[0].source, 'configured')
     assert.equal(r.models[0].configuredAs, 'ANTHROPIC_MODEL')
-    assert.equal(r.models[1].configuredAs, null)
-    // 配置里那个「服务端不支持」的名字绝不能出现在 models 里。
-    assert.ok(!r.models.some((m) => m.id === 'not-supported-anywhere'))
-    // 但它作为诊断线索保留（并注明非权威）。
-    assert.ok(r.diagnostic.configured.some((m) => m.id === 'not-supported-anywhere'))
+    assert.equal(r.models[2].source, 'account-live')
+    assert.equal(r.models[2].configuredAs, null)
+    // 服务端没报的名字仍可出现（配置来源），但**必须**标成 configured ——
+    // 这是红线的当前形态：允许出现，绝不冒充服务端权威。
+    const odd = r.models.find((m) => m.id === 'not-supported-anywhere')
+    assert.ok(odd, 'configured model must be listed')
+    assert.equal(odd.source, 'configured', 'must NOT impersonate account-live')
   } finally { rmSync(home, { recursive: true, force: true }) }
 })
 
-test('listAccountModels：探测失败 → ok:false + 配置线索（绝不当成可用清单返回）', async () => {
+test('listAccountModels：无配置且探测失败 → ok:false + 可操作错误（绝不返回空清单当成功）', async () => {
   resetModelsCache()
-  const home = mkHome({ ANTHROPIC_MODEL: 'looks-like-a-model' })
-  try {
-    const r = await listAccountModels({ CLAUDE_BIN: 'C:/nope/claude.exe', USERPROFILE: home }, {})
-    assert.equal(r.ok, false)
-    assert.deepEqual(r.models, [])
-    assert.equal(r.count, 0)
-    assert.match(r.error, /无法获取服务端权威模型清单/)
-    assert.deepEqual(r.diagnostic.configured.map((m) => m.id), ['looks-like-a-model'])
-    assert.match(r.diagnostic.note, /不是服务端可用全集/)
-  } finally { rmSync(home, { recursive: true, force: true }) }
+  // USERPROFILE 指向不存在的目录 → 没有 configured 来源；probe 也失败 → 无任何来源。
+  const r = await listAccountModels({ CLAUDE_BIN: 'C:/nope/claude.exe', USERPROFILE: 'X:\\__no_home__' }, {})
+  assert.equal(r.ok, false)
+  assert.deepEqual(r.models, [])
+  assert.equal(r.count, 0)
+  assert.ok(String(r.error).length > 20, 'error must be actionable')
+  assert.equal(r.source, 'none')
+  resetModelsCache()
 })
 
 test('listAccountModels：TTL 缓存命中（第二次不再起进程），refresh 强制重探', async () => {

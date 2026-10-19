@@ -287,12 +287,30 @@ export function check(env) → true | throw                             // --che
 - **成功判定陷阱**：`is_error=true` 时退出码可能是 0 也可能是 1，且 `subtype` 仍可能是
   `"success"`（无效模型实测就是这个形状）。判定必须 `is_error === false && exitCode === 0`。
 - 续聊：`--resume <session_id>` / `-c|--continue` / `--fork-session`。
-- 模型清单：**唯一权威来源 = 无效模型触发的服务端 400 报文**
-  `"The supported API model names are X, Y, ..."`。`~/.claude/settings.json` 的 env 块里
-  `ANTHROPIC_DEFAULT_*_MODEL` / `ANTHROPIC_MODEL` 是**用户配置的别名映射，不是服务端可用
-  全集**（实测两者不一致），只能作诊断线索。
+- **模型清单 = 配置来源 ∪ 服务端报文**（0.2.11 起，两者各带 `source` 标注）。踩过的两个坑：
+  ① **只信服务端 400 报文会给出「比用户配的还少」的清单** —— 实测 DeepSeek 端点只回
+  `deepseek-flash, deepseek-v4-pro` 两个基础名，而用户配置的 `deepseek-v4-pro[1M]` /
+  `deepseek-v4-flash` 逐个实测都 200（带上下文后缀/命名变体，报文不列）。
+  ② **走本地代理时探测会失效**：某些网关对任何模型名都放行（甚至回显探测用的假名），
+  永远不产生 400 报文 —— 此时若只靠探测就等于没有清单。
+  故 `~/.claude/settings.json` 的 `ANTHROPIC_MODEL` / `ANTHROPIC_DEFAULT_*_MODEL` 是**合法
+  清单来源之一**（`source: 'configured'`，排在前），服务端报文作补充（`source: 'account-live'`）。
+  **红线不变**：来源必须如实标注，配置来源绝不冒充服务端权威。
+- **端点必须能走 cc-switch 本地代理**（0.2.11 起）。用户用 cc-switch 的 **proxy 模式** 把
+  Claude 指向第三方网关（例 `https://opencode.ai/zen/go`），该网关要求自家 session 头
+  （缺则 `400 MissingSessionID`），而 **claude CLI 不会发这个头 → 直连必然失败**。
+  实测对照：同一配置直连 → 400；改指 `http://127.0.0.1:15721`（cc-switch 本地代理）→ 200。
+  做法：`--settings '{"env":{"ANTHROPIC_BASE_URL":"<proxy>"}}'` 只覆盖 base_url，
+  **绝不改写** `~/.claude/settings.json`（那是 cc-switch 的领地，改它下次切换即被打回）。
+  设置项 `endpointMode`：`auto`（探活代理，活着就用）/ `proxy`（强制，探不到则**明确报错**）/
+  `direct`（强制直连）。代理地址 `proxyUrl` 默认 `http://127.0.0.1:15721`。
+  探活靠一次性 `node -e` 子进程做 HTTP GET（Node 无同步 HTTP），结果按 URL 缓存 30s。
 - 权限：`-p` 无 TTY，任何需要交互批准的动作都会挂到超时，故 auto 模式映射为
   `--dangerously-skip-permissions`（或 plan 态 `--permission-mode plan`）。
+- **Claude Desktop 不是可执行后端**：它是 GUI、无 `-p` 式非交互入口（本机实测其配置目录为空 =
+  未安装）；cc-switch 对它的 `/claude-desktop/v1/messages` 还需一个内部 gateway token
+  （db 里 `claude_desktop_gateway_token` 实测校验不过）。故它只能作为**配置来源**被读取，
+  不能作为 provider 的第二个"执行面"。
 
 ### codex（OpenAI Codex CLI，实测 0.98.0）
 - 非交互：`codex exec [opts] <prompt>`；`--json` 出事件流，不加就是纯文本。

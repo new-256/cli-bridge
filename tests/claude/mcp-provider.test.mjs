@@ -14,11 +14,15 @@ const mcp = await import('../../mcp/providers/claude.mjs')
 
 function mkIo() {
   const homeDir = mkdtempSync(join(tmpdir(), 'cli-bridge-claude-'))
+  // 隔离配置目录：否则 readConfiguredModels 会读**本机真实** ~/.claude/settings.json，
+  // 把用户实际在用的模型混进 fixture 清单（实测踩到：期望 2 个却出来 5 个）。
+  const cfgDir = join(homeDir, '.claude')
+  mkdirSync(cfgDir, { recursive: true })
   return {
     homeDir,
     fs: { existsSync, mkdirSync, writeFileSync, renameSync, readFileSync },
     path: { join, dirname },
-    env: process.env,
+    env: Object.assign({}, process.env, { CLAUDE_CONFIG_DIR: cfgDir }),
     log: () => { },
     _cleanup: () => { try { rmSync(homeDir, { recursive: true, force: true }) } catch (e) { } }
   }
@@ -93,14 +97,23 @@ test('claude_continue：sessionId 透传（--resume），latest → --continue',
 })
 
 test('claude_models：经 MCP 面读服务端权威清单', async () => {
+  // MCP 面的 provider 是模块级单例（env 绑定 process.env），io.env 覆盖不到它 ——
+  // 所以隔离必须临时改 process.env.CLAUDE_CONFIG_DIR，否则会读到本机真实
+  // ~/.claude/settings.json，把用户配置的模型混进 fixture 清单。
   const io = mkIo()
+  const prev = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = io.env.CLAUDE_CONFIG_DIR
   try {
     const text = await mcp.call('claude_models', { refresh: true }, io)
     assert.match(text, /claude models \(2\)/)
     assert.match(text, /fake-model-alpha/)
     assert.match(text, /fake-model-beta/)
     assert.match(text, /source=account-live/)
-  } finally { io._cleanup() }
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = prev
+    io._cleanup()
+  }
 })
 
 test('claude_status：返回可渲染文本且带 provider 标识', async () => {

@@ -9,6 +9,37 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 > - CodeBuddy 线：[docs/history/codebuddy/CHANGELOG.md](docs/history/codebuddy/CHANGELOG.md)（终版 1.6.2）
 > - MiMo 线：[docs/history/mimo/CHANGELOG.md](docs/history/mimo/CHANGELOG.md)（终版 1.2.9）
 
+## [0.2.11] - 2026-10-20
+
+> 用户反馈：「claude 我是用 cc-switch 改的配置，你现在获取的模型不对」。查证后不是列表写错，
+> 而是**整条链路**有两处判断错误 —— 本版修复。
+
+### Fixed
+- **claude 直连 cc-switch 的 proxy 端点必失败**（这是根本原因）。cc-switch 的 **proxy 模式**
+  把 Claude 指向第三方网关（本机实测 `https://opencode.ai/zen/go`），该网关要求自家 session 头
+  （缺则 `400 MissingSessionID`），而 claude CLI 不会发这个头。同一配置实测对照：
+  - 直连 → `exit=1, API Error: 400 MissingSessionID`
+  - 改指 cc-switch 本地代理 `http://127.0.0.1:15721` → `exit=0, "OK"`
+  现在桥接用 `--settings '{"env":{"ANTHROPIC_BASE_URL":"<proxy>"}}'` **只覆盖 base_url**，
+  **绝不改写** `~/.claude/settings.json`（那是 cc-switch 的领地，改它下次切换即被打回）。
+  新增设置项：`endpointMode`（`auto` 探活代理 / `proxy` 强制，探不到**明确报错** / `direct`
+  强制直连）、`proxyUrl`（默认 `127.0.0.1:15721`）。面板会显示当前实际走法。
+- **模型清单漏掉了用户实际在用的模型**。原先只认「无效模型触发的服务端 400 报文」，而实测：
+  - 服务端只回**基础名** `deepseek-flash, deepseek-v4-pro`；
+  - 用户配置的 `deepseek-v4-pro[1M]` / `deepseek-v4-flash` 逐个实测**都 200 可用**；
+  - 且走本地代理时网关对任何模型名都放行（连探测用的假模型名都回显），**永远不产生 400 报文**
+    —— 只靠探测时这份清单等于空。
+  现在改为**配置来源 ∪ 服务端报文**，各带 `source` 标注（`configured` 在前、`account-live` 补充），
+  面板标签会写明「来自哪个 ANTHROPIC_*_MODEL」或「[服务端清单]」。
+  **红线不变**：来源必须如实标注，配置来源绝不冒充服务端权威。
+
+### Changed
+- `providers/claude-endpoint.mjs`（新片）：端点解析与代理探活（`node -e` 做 HTTP GET，
+  结果按 URL 缓存 30s，因为 buildArgv/meta 都是同步回调，Node 无同步 HTTP）。
+- 测试改为**密闭**：claude 的模型测试与 MCP 测试此前会读本机真实 `~/.claude/settings.json`
+  （实测期望 2 个却出现 5 个），现统一注入 `CLAUDE_CONFIG_DIR` 指向临时目录；
+  buildArgv 断言注入 `probeProxy`，与本机代理是否在跑解耦。
+
 ## [0.2.10] - 2026-10-20
 
 > ⚠️ **0.2.9 的 dynamic 沙箱形态在 opencode / mimo 两家是坏的**，本版修复。若你在用这两家的

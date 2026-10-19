@@ -209,8 +209,15 @@ export function readConfiguredModels(env) {
 }
 
 /** 探测 argv（不含 exe 前缀）：固定参数集，绝不拼装用户 prompt。 */
-export function probeArgv() {
-  return ['-p', 'hi', '--model', PROBE_MODEL, '--output-format', 'json', '--no-session-persistence']
+/**
+ * 探测用的 argv。`baseUrl` 非空时用 `--settings` 覆盖 ANTHROPIC_BASE_URL ——
+ * 这是 cc-switch proxy 模式唯一可行的访问方式（直连第三方网关缺 session 头必 400）。
+ * 只覆盖 base_url，不碰用户的 ~/.claude/settings.json。
+ */
+export function probeArgv(baseUrl) {
+  const argv = ['-p', 'hi', '--model', PROBE_MODEL, '--output-format', 'json', '--no-session-persistence']
+  if (baseUrl) argv.push('--settings', JSON.stringify({ env: { ANTHROPIC_BASE_URL: String(baseUrl) } }))
+  return argv
 }
 
 /** 探测失败时的可操作文案（区分「没找到 CLI」与「CLI 跑了但服务端没报清单」）。 */
@@ -249,7 +256,7 @@ export function probeSupportedModels(env, opts) {
       }
       const exe = probeList[idx++]
       const spec = splitExeSpec(exe)
-      const argv = spec.prefixArgs.concat(probeArgv())
+      const argv = spec.prefixArgs.concat(probeArgv(o.baseUrl))
       let c
       try {
         const spawnCmd = spec.shell ? [spec.cmd].concat(argv).map(quoteShellArg).join(' ') : spec.cmd
@@ -300,6 +307,21 @@ export function probeSupportedModels(env, opts) {
  * @param {object} env
  * @param {{binPath?: string, timeoutMs?: number, refresh?: boolean}} [opts]
  */
+/**
+ * 列出可用模型 —— **合并两个来源**，而不是只认服务端报文。
+ *
+ * 为什么必须合并（真实事故）：服务端「无效模型触发 400」只回吐**基础模型名**。
+ * 实测 DeepSeek 的 Anthropic 兼容端点报 `deepseek-flash, deepseek-v4-pro`，
+ * 但用户实际配置在用的 `deepseek-v4-pro[1M]` / `deepseek-v4-flash` 逐个实测都是 200 ——
+ * 它们只是带上下文窗口后缀/命名变体，服务端报文不列。若只信报文，用户会看到一份
+ * 「比我配的还少」的清单，等于给错答案。
+ *
+ * 因此：configured（`~/.claude/settings.json` 的 env，cc-switch 等工具写入的**最终生效**
+ * 配置）+ account-live（服务端报文）取并集，逐项标注来源；configured 排在前面。
+ *
+ * 且 configured **不依赖探测成功** —— 端点若根本不支持 400 技巧（如某些代理对任何
+ * 模型都先校验 session），我们仍能把用户配置的模型给出来，而不是返回空。
+ */
 export async function listAccountModels(env, opts) {
   const o = opts || {}
   const key = modelsCacheKey(env, o.binPath)
@@ -307,32 +329,46 @@ export async function listAccountModels(env, opts) {
   const probe = await cachedModels(key, () => probeSupportedModels(env, o))
   const cfg = readConfiguredModels(env)
   const configured = cfg.models || []
-  if (!probe.ok) {
+
+  // 大小写不敏感 + 忽略 [1m]/[1M] 这类后缀后做去重键，避免同一模型重复占两行。
+  const dk = (id) => String(id).trim().toLowerCase().replace(/\[[^\]]*\]$/, '')
+  const seen = new Set()
+  const models = []
+  for (const m of configured) {
+    const k = dk(m.id)
+    if (seen.has(k)) continue
+    seen.add(k)
+    models.push({ id: m.id, source: 'configured', configuredAs: m.key })
+  }
+  const probeIds = probe && probe.ok ? (probe.ids || []) : []
+  for (const id of probeIds) {
+    const k = dk(id)
+    if (seen.has(k)) continue
+    seen.add(k)
+    models.push({ id, source: 'account-live', configuredAs: null })
+  }
+
+  if (!models.length) {
     return {
-      ok: false,
-      source: 'account-live',
-      models: [],
-      count: 0,
-      error: String(probe.error || 'probe failed'),
-      diagnostic: {
-        configured: configured,
-        settingsPath: cfg.path,
-        note: 'ANTHROPIC_*_MODEL 只是用户配置的别名映射，不是服务端可用全集；因此不作为 models 返回。'
-      }
+      ok: false, source: 'none', models: [], count: 0,
+      error: String((probe && probe.error) || 'no configured models and probe returned nothing') +
+        (cfg.error ? '；settings.json: ' + cfg.error : ''),
+      diagnostic: { configured, settingsPath: cfg.path, probeError: (probe && probe.error) || null }
     }
   }
-  const ids = probe.ids.slice()
-  const byId = new Map(configured.map((m) => [m.id, m]))
-  const byIdLoose = new Map(configured.map((m) => [String(m.id).toLowerCase().replace(/\[.*\]$/, ''), m]))
+  // source 汇总：两个来源都有效时标注合并，便于面板/工具如实显示。
+  const source = (configured.length && probeIds.length) ? 'configured+account-live'
+    : (configured.length ? 'configured' : 'account-live')
   return {
     ok: true,
-    source: 'account-live',
-    models: ids.map((id) => {
-      const hit = byId.get(id) || byIdLoose.get(String(id).toLowerCase())
-      return { id, source: 'account-live', configuredAs: hit ? hit.key : null }
-    }),
-    count: ids.length,
-    ext: { exe: probe.exe || null, mode: probe.mode },
-    diagnostic: { settingsPath: cfg.path, configured: configured }
+    source,
+    models,
+    count: models.length,
+    ext: { exe: (probe && probe.exe) || null, mode: (probe && probe.mode) || null },
+    diagnostic: {
+      settingsPath: cfg.path,
+      configured,
+      probeError: (probe && !probe.ok) ? String(probe.error || 'probe failed') : null
+    }
   }
 }
