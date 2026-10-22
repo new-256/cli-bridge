@@ -11,6 +11,7 @@
 //   • 模型清单没有 CLI 子命令，只能走 HTTP /models（descriptor 的 codex_models 负责），
 //     这里只做工具面转接，不复制解析逻辑。
 import { spawn as nodeSpawn } from 'node:child_process'
+import { resolveCwdWithSession } from '../session-cwd.mjs'
 import { resolve as resolvePath } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -78,10 +79,15 @@ function exePrefix() {
   return codexResolveExePrefix(process.env, '')
 }
 
-function resolveCwd(a) {
-  if (a && a.cwd) return resolvePath(String(a.cwd))
-  return process.env.CODEX_BRIDGE_CWD || process.cwd()
-}
+    function resolveCwd(a) {
+      if (a && a.cwd) return resolvePath(String(a.cwd))
+      // 兜底链：用户 env 覆盖 → **会话真实目录** → process.cwd()。末两级很关键：
+      // MCP server 由 DSH 以空 cwd 启动，process.cwd() 是 DSH 主进程目录而非用户项目，
+      // 直接用会让 CLI 把整个项目判成「工作区外」（agy/claude/opencode/codex 都踩过）。
+      const envCwd = process.env.CODEX_BRIDGE_CWD
+      if (envCwd) return resolvePath(String(envCwd))
+      return resolveCwdWithSession(null, '', resolvePath)
+    }
 
 function baseResult(over) {
   return Object.assign({

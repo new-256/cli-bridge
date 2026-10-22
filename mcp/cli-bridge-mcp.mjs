@@ -33,7 +33,7 @@ import * as claudeMcp from './providers/claude.mjs'
 import * as codexMcp from './providers/codex.mjs'
 
 const SERVER_NAME = 'cli-bridge-mcp'
-const SERVER_VERSION = '0.2.13'
+const SERVER_VERSION = '0.2.14'
 const PROTOCOL = '2024-11-05'
 
 const PROVIDERS = [agyMcp, codebuddyMcp, mimoMcp, opencodeMcp, claudeMcp, codexMcp]

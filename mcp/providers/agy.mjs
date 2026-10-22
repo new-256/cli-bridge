@@ -12,6 +12,7 @@
 //  - 无 ctx.emit：状态走快照文件 {homeDir}/cli-bridge-mcp-agy.json
 //    （bridge-kit buildMcpBridgePayload + 原子写 tmp→rename；写失败静默）。
 import { spawn as nodeSpawn } from 'node:child_process'
+import { resolveCwdWithSession } from '../session-cwd.mjs'
 import { existsSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -57,10 +58,15 @@ function exePrefix() {
   }
   return [process.platform === 'win32' ? 'agy.exe' : 'agy']
 }
-function resolveCwd(a) {
-  if (a && a.cwd) return resolvePath(String(a.cwd))
-  return process.env.AGY_MCP_CWD || process.cwd()
-}
+    function resolveCwd(a) {
+      if (a && a.cwd) return resolvePath(String(a.cwd))
+      // 兜底链：用户 env 覆盖 → **会话真实目录** → process.cwd()。末两级很关键：
+      // MCP server 由 DSH 以空 cwd 启动，process.cwd() 是 DSH 主进程目录而非用户项目，
+      // 直接用会让 CLI 把整个项目判成「工作区外」（agy/claude/opencode/codex 都踩过）。
+      const envCwd = process.env.AGY_MCP_CWD
+      if (envCwd) return resolvePath(String(envCwd))
+      return resolveCwdWithSession(null, '', resolvePath)
+    }
 
 // ── spawn（旧 runAgy verbatim 语义；实时折叠走 bridge-kit 行流）────────────────
 function runAgy(args) {

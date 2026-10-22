@@ -19,6 +19,7 @@
 //  - 设置：统一文件 cli-bridge-settings.json 的 codebuddy 分区（5s 缓存），旧扁平
 //    文件的字段级迁移在 DSH 面板侧由 keystone 完成；这里读不到即用默认值。
 import { spawn as nodeSpawn } from 'node:child_process'
+import { resolveSessionCwd } from '../session-cwd.mjs'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve as resolvePath, join as nodePathJoin } from 'node:path'
 
@@ -127,7 +128,12 @@ function cwdBlockedReason(cwd, io) {
 function runCodebuddy(args, io) {
   return new Promise((resolve) => {
     const settings = readSettings(io)
-    const cwdFallback = (io.env || {}).CODEBUDDY_MCP_CWD || process.cwd()
+    // cwd 兜底链：用户 env 覆盖 → **会话真实目录** → process.cwd()。
+    // 末两级很关键：MCP server 由 DSH 以空 cwd 启动，process.cwd() 是 DSH 主进程目录，
+    // 而非用户项目；直接用会让 CLI 把整个项目判成「工作区外」（或撞 cwd 白名单）。
+    const cwdFallback = (io.env || {}).CODEBUDDY_MCP_CWD
+      || resolveSessionCwd(io.env)
+      || process.cwd()
     const target = engine.resolveTarget(args, cwdFallback)
     const backend = provider.resolveBackend(args, target, settings.preferredBackend)
     // 端点/凭据：端点按登录域自动对齐（修 npm 面 401）；凭据仅 codebuddy-en 需要

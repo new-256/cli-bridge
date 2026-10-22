@@ -212,6 +212,37 @@ export function check(env) → true | throw                             // --che
 `{homeDir}/cli-bridge-mcp-<id>.json`**（用 bridge-kit 的 buildMcpBridgePayload + 原子写
 `tmp→rename`）。允许 `import node:*`（MCP 是真 Node 进程）。
 
+### 4.1 cwd 解析（**必读**，0.2.14 事故）
+
+MCP 形态**没有** `getCwdFallback`（那是 preset/dynamic 才有的 hostOpts）。cwd 兜底链必须走
+`mcp/session-cwd.mjs`：
+
+```
+args.cwd（调用方显式传，最可靠）
+  → env <ID>_MCP_CWD（用户覆盖）
+  → resolveSessionCwd(env)      ← 会话真实目录，经 DSH_SESSION_ID 从 projcache 读
+  → process.cwd()               ← 最后兜底
+```
+
+**为什么不能用 `|| process.cwd()` 直接兜底**（这正是 0.2.14 修的 bug）：
+`@deepseek-ai/dsh-mcp-client` 启动 stdio server 时 `config.cwd` 默认是**空字符串**
+（源码 `cwd: z.string().default("")`），所以 MCP 进程的 `process.cwd()` 是 **DSH 主进程的
+目录**（dsh-home / 安装目录），不是用户会话目录。CLI 据此把整个用户项目判成"工作区外"：
+
+- codex `-s workspace-write` → 直接拒绝写入
+- claude / opencode / agy → 按各自 project 边界拒绝
+
+DSH 会给子进程 `DSH_SESSION_ID`（实测存在），但**不给**会话目录的环境变量 —— 所以必须自己
+从 `{DSH_HOME}/storages/session_projcache/sessions/<sessionId>.json` 的
+`record.identity.cwd` 读。读取全程容错（失败返回空串继续兜底），结果按会话 id 缓存 60s。
+
+回归防线：`tests/keystone/session-cwd.test.mjs` 会检查每个 provider 都 import 了
+`session-cwd.mjs`，且**不再出现裸 `|| process.cwd()` 兜底**；
+`tests/e2e/session-cwd-fix.mjs` 在"MCP 进程 cwd 故意设错"的条件下验证实际用的是会话目录。
+
+注意：cwd 修好只代表"工作区对了"。codex 的 `workspace-write` 仍不允许写 cwd 之外 ——
+那是它的安全设计，跨项目任务需显式传 `sandboxMode: 'danger-full-access'` 或 `addDirs`。
+
 ## 5. 交付文件清单（每个 provider 完全一致，路径冻结）
 
 | 文件 | 形态 | 说明 |

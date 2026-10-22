@@ -9,6 +9,7 @@
 // opencode 无 quota/额度门禁（凭据与额度由 opencode 自身与 provider 决定），
 // 因此本面只有三件套。
 import { spawn as nodeSpawn } from 'node:child_process'
+import { resolveCwdWithSession } from '../session-cwd.mjs'
 import { resolve as resolvePath } from 'node:path'
 
 import defineProvider, { resolveExePrefix } from '../../providers/opencode.mjs'
@@ -73,10 +74,15 @@ provider.engine = engine
 function exePrefix() {
   return resolveExePrefix(process.env, '')
 }
-function resolveCwd(a) {
-  if (a && a.cwd) return resolvePath(String(a.cwd))
-  return process.env.OPENCODE_MCP_CWD || process.cwd()
-}
+    function resolveCwd(a) {
+      if (a && a.cwd) return resolvePath(String(a.cwd))
+      // 兜底链：用户 env 覆盖 → **会话真实目录** → process.cwd()。末两级很关键：
+      // MCP server 由 DSH 以空 cwd 启动，process.cwd() 是 DSH 主进程目录而非用户项目，
+      // 直接用会让 CLI 把整个项目判成「工作区外」（agy/claude/opencode/codex 都踩过）。
+      const envCwd = process.env.OPENCODE_MCP_CWD
+      if (envCwd) return resolvePath(String(envCwd))
+      return resolveCwdWithSession(null, '', resolvePath)
+    }
 
 // ── spawn（实时折叠走 bridge-kit 行流）────────────────────────────────────────
 function runOpencode(args) {

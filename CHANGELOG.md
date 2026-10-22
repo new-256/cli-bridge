@@ -9,6 +9,46 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 > - CodeBuddy 线：[docs/history/codebuddy/CHANGELOG.md](docs/history/codebuddy/CHANGELOG.md)（终版 1.6.2）
 > - MiMo 线：[docs/history/mimo/CHANGELOG.md](docs/history/mimo/CHANGELOG.md)（终版 1.2.9）
 
+## [0.2.14] - 2026-10-23
+
+> 用户反馈：「agent 委派任务时 agy/opencode/claude/codex 部分 CLI 报错：无权编辑工作区外的内容」。
+> 根因不是 CLI 的沙箱太严，而是**工作区边界一开始就定错了**。
+
+### Fixed
+- **MCP 形态下所有 provider 的工作目录都可能是错的**（这是本次报错的根因）。
+  链路：`@deepseek-ai/dsh-mcp-client` 启动 stdio server 时 `config.cwd` 默认是**空字符串**
+  （源码里 `cwd: z.string().default("")`），于是 MCP 进程的 `process.cwd()` 是 **DSH 主进程
+  的目录**（dsh-home / 安装目录），而不是用户的会话目录。而各 provider 的 cwd 兜底恰好是
+  `process.env.<ID>_MCP_CWD || process.cwd()` —— 于是 CLI 认为"工作区"是那个无关目录，
+  用户项目里的一切都成了"工作区外"：
+  - **codex**：`-s workspace-write` 直接拒绝写入
+  - **claude / opencode / agy**：按各自的 project 边界拒绝
+  实测复现（同一组任务，cwd 正确前的表现）：agy 能写区外、codex/claude/opencode 失败。
+
+  修复：新增 `mcp/session-cwd.mjs`，用 DSH 提供给子进程的 `DSH_SESSION_ID` 从 projcache 的
+  `record.identity.cwd` 读出**会话真实目录**，把兜底链补成：
+  `args.cwd`（调用方显式传）→ `<ID>_MCP_CWD`（用户 env）→ **会话真实目录** → `process.cwd()`。
+  六家全部接入（agy / codebuddy / mimo / opencode / claude / codex）。
+  读取全程容错：任何失败都返回空串继续往下兜底，绝不打断工具调用；结果按会话 id 缓存 60s。
+
+  验证（`tests/e2e/session-cwd-fix.mjs`）：故意把 MCP 进程 cwd 设成一个无关目录、会话目录
+  设为 `my-project`，调用时不传 cwd —— 状态文件记录的 cwd 是 `my-project`，即用的是会话目录
+  而非进程目录。
+
+### 说明（不是缺陷，但会继续表现为「无权编辑」）
+- **codex 的 `-s workspace-write` 只能写 cwd 之内**，这是它自身的安全设计。cwd 修好后，
+  常规"在项目内改文件"已经正常；要**跨项目/写工作区外**仍会被拒，需要显式放宽：
+  - 传 `sandboxMode: 'danger-full-access'`（或在设置面板改「沙箱模式」）
+  - 或传 `addDirs: [...]` 追加可写目录（claude/agy 走 `--add-dir`；codex exec 亦支持）
+- claude / agy 用 `--dangerously-skip-permissions`，opencode 用 `--auto`，本就没有沙箱限制；
+  它们此前的失败来自 cwd 错位（本次修复），以及排查过程中观察到的**免费额度限流**
+  （`429 free-models-per-day-high-balance`）与 cc-switch 代理未启动（见下）。
+
+### 排查环境记录（避免误判为插件缺陷）
+- 复现过程中 codex / opencode 返回 `429 Rate limit exceeded: free-models-per-day-high-balance`，
+  claude 返回 `API Error: Connection error` —— 后者根因是 **cc-switch 本地代理 15721 未运行**
+  （`ECONNREFUSED`），并非插件问题。claude 依赖该代理补 session 头（见 0.2.11）。
+
 ## [0.2.13] - 2026-10-20
 
 > 用户反馈「通道可能通了，但是我没有看到状态灯」。查证后：**灯没坏，是显示条件没被满足**

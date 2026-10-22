@@ -9,6 +9,7 @@
 // 工具名/schema 从描述符取（单一来源，防两处漂移），描述与 background 语义按 MCP 面重写：
 // MCP 没有 DSH jobs，background 参数在该形态无意义，故 schema 里裁掉。
 import { spawn as nodeSpawn } from 'node:child_process'
+import { resolveCwdWithSession } from '../session-cwd.mjs'
 import { readFileSync } from 'node:fs'
 import { resolve as resolvePath, dirname } from 'node:path'
 
@@ -67,10 +68,15 @@ const engine = createStatusEngine({ provider, publish: publishSnapshot })
 provider.engine = engine
 
 function exePrefix() { return resolveExePrefix(process.env, '') }
-function resolveCwd(a) {
-  if (a && a.cwd) return resolvePath(String(a.cwd))
-  return process.env.CLAUDE_MCP_CWD || process.cwd()
-}
+    function resolveCwd(a) {
+      if (a && a.cwd) return resolvePath(String(a.cwd))
+      // 兜底链：用户 env 覆盖 → **会话真实目录** → process.cwd()。末两级很关键：
+      // MCP server 由 DSH 以空 cwd 启动，process.cwd() 是 DSH 主进程目录而非用户项目，
+      // 直接用会让 CLI 把整个项目判成「工作区外」（agy/claude/opencode/codex 都踩过）。
+      const envCwd = process.env.CLAUDE_MCP_CWD
+      if (envCwd) return resolvePath(String(envCwd))
+      return resolveCwdWithSession(null, '', resolvePath)
+    }
 
 // ── spawn（实时折叠走 bridge-kit 行流；.cmd 走 shell）─────────────────────────
 function runClaude(args) {
