@@ -65,11 +65,13 @@ test('单后端归一：任何取值都是 null', () => {
 })
 
 // ── buildArgv（实测 flag 集）─────────────────────────────────────────────────
-test('buildArgv 基础形态：exec --json --skip-git-repo-check -s … -c approval_policy <prompt>', () => {
+test('buildArgv 基础形态：exec --json --skip-git-repo-check -s danger-full-access -c approval_policy <prompt>', () => {
   const b = provider.buildArgv('codex', { prompt: 'do it' }, { planActive: false })
-  // 非交互（exec 无 TTY）必须显式给 approval_policy="never"，否则 codex 会等一个
-  // 没人能点的批准，一直挂到超时。此前默认留空、靠用户 config.toml，属隐式依赖。
-  assert.deepEqual(b.argv, ['codex', 'exec', '--json', '--skip-git-repo-check', '-s', 'workspace-write', '-c', 'approval_policy="never"', 'do it'])
+  // 默认沙箱与其余五家（skip-permissions / auto 档）对齐：不限工作区。
+  // 用户明确要求「其他 CLI 要有与 agy 一样自由的权限」——此前默认 workspace-write
+  // 是 codex 唯一比别家严的地方，直接导致「无权编辑工作区外」。
+  // 非交互（exec 无 TTY）同时必须显式给 approval_policy="never"，否则会等一个没人能点的批准。
+  assert.deepEqual(b.argv, ['codex', 'exec', '--json', '--skip-git-repo-check', '-s', 'danger-full-access', '-c', 'approval_policy="never"', 'do it'])
   assert.equal(b.mode, 'accept-edits')
   assert.equal(b.timeoutSec, 900)
 })

@@ -240,8 +240,21 @@ DSH 会给子进程 `DSH_SESSION_ID`（实测存在），但**不给**会话目�
 `session-cwd.mjs`，且**不再出现裸 `|| process.cwd()` 兜底**；
 `tests/e2e/session-cwd-fix.mjs` 在"MCP 进程 cwd 故意设错"的条件下验证实际用的是会话目录。
 
-注意：cwd 修好只代表"工作区对了"。codex 的 `workspace-write` 仍不允许写 cwd 之外 ——
-那是它的安全设计，跨项目任务需显式传 `sandboxMode: 'danger-full-access'` 或 `addDirs`。
+注意：cwd 修好只代表"工作区对了"。
+**0.2.15 起 codex 默认沙箱改为 `danger-full-access`**（原先 `workspace-write`），与其余五家
+的免确认档对齐 —— 用户明确要求「其他 CLI 要有与 agy 一样自由的权限」。六家当前权限档位：
+
+| provider | 生效参数 | 是否限工作区 |
+| --- | --- | --- |
+| agy | `--dangerously-skip-permissions --mode accept-edits` | 否 |
+| claude | `--dangerously-skip-permissions` | 否 |
+| mimo | `--dangerously-skip-permissions` | 否 |
+| opencode | `--auto` | 否 |
+| codebuddy | `--permission-mode bypassPermissions` | 否 |
+| codex | `-s danger-full-access` + `-c approval_policy="never"` | 否 |
+
+plan 模式仍保留只读语义（codex `read-only`）。想收紧：传 `args.sandboxMode`，
+或在设置面板改「沙箱策略」（codex 专有）。
 
 ## 5. 交付文件清单（每个 provider 完全一致，路径冻结）
 

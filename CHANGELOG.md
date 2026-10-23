@@ -9,6 +9,41 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 > - CodeBuddy 线：[docs/history/codebuddy/CHANGELOG.md](docs/history/codebuddy/CHANGELOG.md)（终版 1.6.2）
 > - MiMo 线：[docs/history/mimo/CHANGELOG.md](docs/history/mimo/CHANGELOG.md)（终版 1.2.9）
 
+## [0.2.15] - 2026-10-23
+
+> 用户要求：「必须要让其他 CLI 有与 agy 一样自由的权限」。核对后发现六家里**只有 codex 被沙箱
+> 限制**，其余五家本来就在免确认档。本版把 codex 拉到同档。
+
+### Changed
+- **codex 默认沙箱 `workspace-write` → `danger-full-access`**（`sandboxFor()` 默认值）。
+  这曾是 codex 唯一比别家严的地方，也正是「无权编辑工作区外的内容」的直接来源。
+  `plan` 模式仍保留 `read-only`（plan 的语义就是不改动）。想收紧：传 `args.sandboxMode`，
+  或在设置面板改「沙箱策略」。
+
+### 六家权限档位
+| provider | 生效参数 | 限工作区 |
+| --- | --- | --- |
+| agy | `--dangerously-skip-permissions --mode accept-edits` | 否 ✅ 实测可写区外 |
+| opencode | `--auto` | 否 ✅ 实测可写区外 |
+| codex | `-s danger-full-access` + `-c approval_policy="never"` | 否 ✅ 实测可写区外（本版修复） |
+| claude | `--dangerously-skip-permissions` | 否（参数已确认；实测受阻见下） |
+| mimo | `--dangerously-skip-permissions` | 否（参数已确认；实测受阻见下） |
+| codebuddy | `--permission-mode bypassPermissions` | 否（参数已确认；实测受阻见下） |
+
+### 排查中确认的环境问题（不是权限/插件缺陷）
+- **mimo**：`MiMo free API service has ended. Sign in or configure a third-party API.`
+  —— 服务方的免费 API 已终止，需登录或配置第三方 API。
+- **claude**：cc-switch 本地代理 `127.0.0.1:15721` 未运行（`ECONNREFUSED`）→ 报
+  `API Error: Connection error`。它依赖该代理补 session 头（见 0.2.11），需先启动 cc-switch。
+- **codebuddy**：`%APPDATA%\npm\codebuddy.cmd` 在 Windows 不能直接 spawn（CVE-2024-27980 起抛
+  `EINVAL`），需经 shell —— provider 内部已有此处理，属验收脚本侧限制。
+  另注意 `%LOCALAPPDATA%\Programs\CodeBuddy\codebuddy.exe` 是 **IDE 桌面程序**（启动即做更新
+  检查），不是 CLI 入口，别拿它当 CLI 用。
+
+### Added（验收工具）
+- `tests/e2e/outside-write-check.mjs`：让 CLI 写**工作目录之外**的文件，直接验收「与 agy 同等
+  自由」：`node tests/e2e/outside-write-check.mjs codex agy`。
+
 ## [0.2.14] - 2026-10-23
 
 > 用户反馈：「agent 委派任务时 agy/opencode/claude/codex 部分 CLI 报错：无权编辑工作区外的内容」。

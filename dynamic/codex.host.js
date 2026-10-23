@@ -677,7 +677,12 @@ function defineProvider (deps = {}) {
   function sandboxFor(mode, args, settings) {
     if (args && args.sandboxMode && SANDBOX_MODES.indexOf(String(args.sandboxMode)) >= 0) return String(args.sandboxMode)
     if (settings && settings.sandboxMode && SANDBOX_MODES.indexOf(String(settings.sandboxMode)) >= 0) return String(settings.sandboxMode)
-    return mode === 'plan' ? 'read-only' : 'workspace-write'
+    // 默认与其余五家（agy/claude/mimo/codebuddy/opencode 的 skip-permissions / auto 档）对齐：
+    // 不限工作区。用户明确要求「其他 CLI 要有与 agy 一样自由的权限」。
+    // 此前默认 workspace-write 会导致「无权编辑工作区外」——那是 codex 唯一比别家严的地方。
+    // plan 模式仍保留 read-only（plan 的语义就是不改动）。
+    // 想收紧：传 args.sandboxMode，或在设置面板改「沙箱模式」。
+    return mode === 'plan' ? 'read-only' : 'danger-full-access'
   }
 
   const descriptor = {
@@ -1012,12 +1017,12 @@ function defineProvider (deps = {}) {
             {
               key: 'sandboxMode', label: '沙箱策略', type: 'select',
               options: [
-                { value: '', label: '（跟随 mode / codex 自身 config）' },
-                { value: 'read-only', label: 'read-only（只读，plan 模式默认）' },
-                { value: 'workspace-write', label: 'workspace-write（可写工作区，默认）' },
-                { value: 'danger-full-access', label: 'danger-full-access（无沙箱，慎用）' }
+                { value: '', label: '（跟随 mode：非 plan 一律 danger-full-access）' },
+                { value: 'read-only', label: 'read-only（只读）' },
+                { value: 'workspace-write', label: 'workspace-write（仅可写工作目录内）' },
+                { value: 'danger-full-access', label: 'danger-full-access（无限制，默认）' }
               ],
-              note: '对应 codex 的 -s；续聊（resume）没有 -s，改经 -c sandbox_mode 生效。'
+              note: '对应 codex 的 -s；续聊（resume）没有 -s，改经 -c sandbox_mode 生效。默认 danger-full-access，与其余五家（agy/claude/mimo/codebuddy/opencode 的 skip-permissions / auto 档）一致；想收紧就选 workspace-write —— 那会禁止写工作目录之外的文件。'
             },
             {
               key: 'approvalPolicy', label: '审批策略', type: 'select',
