@@ -65,10 +65,10 @@ const SELF_ANCHOR = join(ROOT, 'package.json')
 const SELF_PKG = JSON.parse(readFileSync(SELF_ANCHOR, 'utf8'))
 const SELF_PREFIX = SELF_PKG.name + '/'
 
-// 锚在实装 DSH 树里解析裸名与**子路径导出**（exports map 生效，不按目录名拼路径）：
-// 实测 `createRequire(<dsh>/node_modules/@deepseek-ai/dsh/package.json).resolve(...)`
-// 对 26 个 specifier 全部成功，含 `@deepseek-ai/dsh-plugin-manager/tools`、
-// `@deepseek-ai/dsh-tool-subagent-control/list-agents` 两个子路径导出。
+// 锚在实装 DSH 树里解析裸名与**子路径导出**（exports map 生效，不按目录名拼路径）。
+// 历史注记：0.2.1 时 `@deepseek-ai/dsh-tool-subagent-control/list-agents` 子路径导出
+// 存在（2026-10-18 实测 26 个 specifier 全过）；0.2.2-rc.3 起该子路径下线 → 该行
+// 已从本仓 preset 单源删除（2026-11-15，全部 preset 因此挂载失败＝「加载失败」）。
 const requireFromDsh = DSH_NM ? createRequire(join(DSH_NM, '@deepseek-ai', 'dsh', 'package.json')) : null
 // 自引用（`@luchenglong/cli-bridge/preset-*`）：锚在本包 package.json，走 exports 自引用语义。
 const requireFromSelf = createRequire(SELF_ANCHOR)

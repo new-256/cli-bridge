@@ -9,6 +9,42 @@ GitHub Release（`scripts/verify.mjs` 在 CI 与 prepack 双重锁一致）。
 > - CodeBuddy 线：[docs/history/codebuddy/CHANGELOG.md](docs/history/codebuddy/CHANGELOG.md)（终版 1.6.2）
 > - MiMo 线：[docs/history/mimo/CHANGELOG.md](docs/history/mimo/CHANGELOG.md)（终版 1.2.9）
 
+## [0.2.16] - 2026-11-15
+
+> 用户贴出截图：DSH「设置 → Agent 预设」里 `opencode-first` 与 `codex-first` 卡片出现红色
+> **加载失败** 徽章。核对后确认是 **DSH 0.2.2-rc.3（2026-11-14 升级）删除了插件依赖的契约**
+> ——六个 provider 预设共用的 `standard-base.mjs` 整体失效，启用的四个预设全部挂载失败
+> （用户截图只截到两张）。本版把基线对齐到实装 0.2.2-rc.3 的官方 standard，并补齐闸门。
+> 详见 `docs/audits/2026-11-15-preset-0.2.2-rc.3-drift.md`。
+
+### Fixed（挂载级致命）
+- **删除 `tool-subagent-list-agents` 行**（`@deepseek-ai/dsh-tool-subagent-control/list-agents`）。
+  0.2.2-rc.3 起该包 `exports` 移除了 `./list-agents` 子路径（`./lib/list-agents.js` 文件还在，
+  但 ESM 只认 exports 表）⇒ 该行 `import` 必抛 `ERR_PACKAGE_PATH_NOT_EXPORTED` ⇒
+  注册表挂载审计判 rows failed ⇒ 预设整体拒挂 ⇒ 卡片「加载失败」。
+- **`tool-subagent` spawn 行 `modelSelectionSettings: true` → `modelSelection: true, modelDiscovery: true`**。
+  `modelSelectionSettings` 已从 schema 删除（`Config.dict` 现含 `modelSelection` / `modelDiscovery`）。
+
+### Changed
+- 基线整体对齐实装 `standard.patch.yml`（0.2.2-rc.3）：
+  - `tool-subagent-control` 行补 `config: { interrupt: false }`（上游显式关闭 `interrupt_agent` 工具；schema `dict=[interrupt]`）。
+  - 新增 `time-context`（`@deepseek-ai/dsh-time-context`）、`tool-schedule`（`@deepseek-ai/dsh-tool-schedule`）、`tool-office`（`@deepseek-ai/dsh-tool-office`）、`tool-plugin-market`（`@deepseek-ai/dsh-plugin-market/tools`，恒 disabled）行。
+  - `tool-fs` 行补 `config: { applyPatch: false }`（对齐上游，edit 已覆盖 apply_patch 全部能力）。
+  - 删除 `tool-ralph` 行：ralph 能力由 `@deepseek-ai/dsh-experimental-ralph-bundle` 以 bundle 注入（本 profile 已装）。
+  - plan-mode 段落首句跟随上游逐字（「until the user approves your plan through exit_plan_mode …」）。
+- **有意不跟随上游的两点**（勿「修正」回去）：
+  1. 不设 `skill-filesystem` 的 `customSkillDirs`：上游用 `createRequire(baseUrl)` 解析 dsh 安装树内
+     `@deepseek-ai/dsh-agent-preset/skills`，而本包声明制预设 baseUrl 继承自 profile，
+     `profiles/web/` 下解析不到该包（实测 MODULE_NOT_FOUND）——照抄会再次弄挂挂载。
+  2. `tool-plugin-manager` 恒 `disabled: true`：桥接代理不该自改自己的组合（web profile 与上游 `!!js` 等效）。
+
+### 防回归
+- `tests/keystone/persona-prompt-vars.test.mjs`：`modelSelectionSettings` 纳入已删除字段静态闸门。
+- `tests/keystone/preset-config-contract.test.mjs` 注释更新（list-agents 子路径已下线）。
+- `tests/mimo/plugin-list.test.mjs`：基线行数 19 → 23。
+- 修复验证：`npm run check` 全绿（verify OK；tests 609/608 pass/0 fail；mcp errors []；
+  preset-config-contract 8/8 绿，此前 1/8）。
+
 ## [0.2.15] - 2026-10-23
 
 > 用户要求：「必须要让其他 CLI 有与 agy 一样自由的权限」。核对后发现六家里**只有 codex 被沙箱

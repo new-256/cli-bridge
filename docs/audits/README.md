@@ -5,6 +5,7 @@
 
 | 日期 | 主题 | 档 |
 |---|---|---|
+| 2026-11-15 | DSH 0.2.2-rc.3 预设契约漂移：`list-agents` 子路径下线致全部 provider 预设挂载失败（卡片「加载失败」）、`modelSelectionSettings` 删除 | [2026-11-15-preset-0.2.2-rc.3-drift.md](./2026-11-15-preset-0.2.2-rc.3-drift.md) |
 | 2026-10-18 | DSH 0.2.1 预设契约漂移：`{{cwd}}` 未注册变量、`tool-subagent` 已删字段、mimo 委派人设迁移为成员预设 | [2026-10-18-preset-0.2.1-contract-fix.md](./2026-10-18-preset-0.2.1-contract-fix.md) |
 
 相关索引：

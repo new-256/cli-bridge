@@ -20,8 +20,9 @@
 //      **通过校验并被原样保留**（`Config['~standard'].validate({provider,backgroundMode})`
 //      无 issues、值幸存；schemastery 无 strict 开关），只是**无人读取**该键
 //      ⇒ 属「静默**忽略**」而非「静默丢弃」。所以**运行时不报错**，静态闸门是唯一防线。
-//    当前 schema 接受：provider / toolName / modelSelectionSettings / agentOptions /
-//                      agentPreset / allowedAgentPresets / maxDepth。
+//    当前 schema 接受（DSH 0.2.2-rc.3）：provider / toolName / modelSelection /
+//                      modelDiscovery / agentOptions / agentPreset /
+//                      allowedAgentPresets / maxDepth（modelSelectionSettings 已被删除）。
 //
 // 双管齐下：① 内存里的单源定义（plugin-list.mjs 的 buildPlugins 输出）；
 //           ② 磁盘上的生成物（agent.cordis.yml 全文，防只手改生成物）。
@@ -43,8 +44,8 @@ const REGISTERED = ['provider', 'model']
 /** 成员预设目录（0.2.1 起角色人格只能作为独立预设存在；无生成物 yml）。 */
 const MEMBER_DIRS = ['mimo-member']
 
-/** dsh-tool-subagent 0.2.1 起已删除的配置字段（写进去要么被显式拒绝、要么被静默忽略）。 */
-const REMOVED_TOOL_SUBAGENT_FIELDS = ['persona', 'toolFilter', 'backgroundMode']
+/** dsh-tool-subagent 0.2.1 起已删除（0.2.2 扩充）的配置字段（显式拒绝或静默忽略，均不被读取）。 */
+const REMOVED_TOOL_SUBAGENT_FIELDS = ['persona', 'toolFilter', 'backgroundMode', 'modelSelectionSettings']
 
 /** 抽取文本里全部 {{...}} 变量名。 */
 function extractVars(text) {

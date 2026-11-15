@@ -16,11 +16,11 @@ test('meta：preset id 是旧会话头引用，不可变（Lead 红线）', () =
   assert.equal(meta.order, 10)
 })
 
-test('行数 = standard 基线 + 唯一桥接行（Lead 定案：19+1=20，动态断言防漂移）', () => {
+test('行数 = standard 基线 + 唯一桥接行（DSH 0.2.2-rc.3 基线：23+1=24，动态断言防漂移）', () => {
   const rows = buildPlugins({ bridgeName: '@luchenglong/cli-bridge/preset-mimo' })
-  assert.equal(standardPluginRows().length, 19, 'baseline is 19')
+  assert.equal(standardPluginRows().length, 23, 'baseline is 23')
   assert.equal(rows.length, standardPluginRows().length + 1)
-  assert.equal(rows.length, 20)
+  assert.equal(rows.length, 24)
 })
 
 test('桥接行：id/name 与 package.json exports 子路径一致（历史 bug：相对路径）', () => {
